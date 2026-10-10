@@ -5,9 +5,9 @@ from part_generation_fcns.cap_step import check_cap, make_cap
 
 def _radii(tp: top):
     rb = tp.output_bearing.OD / 2                         # bearing seat
-    ri = rb - tp.cap.bearing_support_flange_offset        # flange lip inner radius
+    ri = rb - tp.cap.flange.offset        # flange lip inner radius
     rw = rb + tp.output_bearing_offset                    # tower outer wall
-    H = tp.cap.bearing_support_flange_thickness + tp.output_bearing.th  # tower height
+    H = tp.cap.flange.thickness + tp.output_bearing.th  # tower height
     return rb, ri, rw, H
 
 
@@ -28,8 +28,9 @@ def _check_top(tp: top):
 
 
 def make_top(tp: top) -> Part:
+    _check_top(tp)
     rb, ri, rw, H = _radii(tp)
-    tf, tb = tp.cap.bearing_support_flange_thickness, tp.base_thickness
+    tf, tb = tp.cap.flange.thickness, tp.base_thickness
 
     with BuildPart() as part:
         # (r, z) cross-section, revolved about Z
@@ -53,7 +54,6 @@ def make_top(tp: top) -> Part:
 
 def make_top_step(tp: top, top_path: str = "top.step", cap_path: str = "top_cap.step") -> tuple[Part, Part]:
     """Export top and its cap to separate STEP files, each sitting on z=0."""
-    _check_top(tp)
     top_part = make_top(tp)
     cap_part = make_cap(tp.cap, tp.output_bearing)
     top_part.label, cap_part.label = "top", "top_cap"
@@ -71,8 +71,7 @@ if __name__ == "__main__":
         roller_holes_R=40.0,
         roller_holes_N=24,
         cap=cap(
-            bearing_support_flange_offset=2.0,
-            bearing_support_flange_thickness=2.0,
+            flange=flange(thickness=2.0, offset=2.0),
             bearing_retainer_holes=patterned_hole(r=1.25, R=21.5, N=6),  # M2.5 pilot
             r=24.5,                                               # flush with tower wall
         ),

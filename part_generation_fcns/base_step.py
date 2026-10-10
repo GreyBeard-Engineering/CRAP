@@ -21,7 +21,7 @@ def _check_base(b: base):
         raise ValueError("mounting tab wider than the base")
 
 
-def make_base_step(b: base, path: str = "base.step") -> Part:
+def make_base(b: base) -> Part:
     _check_base(b)
     ring_r = b.mounting_holes.r + b.mounting_hole_offset
     tab_angles = np.radians(np.arange(b.mounting_holes.N) * 360 / b.mounting_holes.N)
@@ -54,9 +54,14 @@ def make_base_step(b: base, path: str = "base.step") -> Part:
             with PolarLocations(b.mounting_holes.R, b.mounting_holes.N):
                 Circle(b.mounting_holes.r, mode=Mode.SUBTRACT)
         extrude(amount=b.t)
-
-    export_step(part.part, path)
     return part.part
+
+
+def make_base_step(b: base, path: str = "base.step") -> Part:
+    part = make_base(b)
+    part.label = "base"
+    export_step(part, path)
+    return part
 
 
 if __name__ == "__main__":

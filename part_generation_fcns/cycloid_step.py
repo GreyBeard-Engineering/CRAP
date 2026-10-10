@@ -22,7 +22,7 @@ def output_holes(c: cycloid) -> patterned_hole:
 
 
 def cycloid_thickness(c: cycloid) -> float:
-    return c.cap.bearing_support_flange_thickness + c.input_bearing.th
+    return c.cap.flange.thickness + c.input_bearing.th
 
 
 def make_cycloid(c: cycloid) -> Part:
@@ -34,7 +34,7 @@ def make_cycloid(c: cycloid) -> Part:
     if c.cap.r >= oh.R - oh.r:
         raise ValueError("cap would cover the output holes")
 
-    tf = c.cap.bearing_support_flange_thickness
+    tf = c.cap.flange.thickness
     rb = c.input_bearing.OD / 2
     pts = [tuple(p) for p in cycloid_profile(c)]
 
@@ -43,7 +43,7 @@ def make_cycloid(c: cycloid) -> Part:
             with BuildLine():
                 Spline(*pts, periodic=True)
             make_face()
-            Circle(rb - c.cap.bearing_support_flange_offset, mode=Mode.SUBTRACT)  # flange lip bore
+            Circle(rb - c.cap.flange.offset, mode=Mode.SUBTRACT)  # flange lip bore
             with PolarLocations(oh.R, oh.N):
                 Circle(oh.r, mode=Mode.SUBTRACT)
             with PolarLocations(c.cap.bearing_retainer_holes.R, c.cap.bearing_retainer_holes.N):
@@ -78,8 +78,7 @@ if __name__ == "__main__":
         e=1.2,
         ratio=23,
         cap=cap(
-            bearing_support_flange_offset=1.5,
-            bearing_support_flange_thickness=2.0,
+            flange=flange(thickness=2.0, offset=1.5),
             bearing_retainer_holes=patterned_hole(r=1.0, R=12.0, N=4),  # M2 pilot
             r=15.0,
         ),

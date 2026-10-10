@@ -18,11 +18,15 @@ class motor:
     mounting_holes: patterned_hole
 
 @dataclass
+class flange:
+    thickness: float
+    offset: float # radial overhang past the bearing race it supports
+
+@dataclass
 class cap:
-    bearing_support_flange_offset: float # lip on the part and cap inner edge both overhang the bearing seat by this
-    bearing_support_flange_thickness: float # thickness of the lip and of the cap
+    flange: flange # lip on the part and cap inner edge overhang the bearing OD by offset; both are flange.thickness thick
     bearing_retainer_holes: patterned_hole
-    r: float # cap outer radius
+    r: float # free edge: outer radius of an outer-race cap, inner radius of an inner-race cap
 
 @dataclass
 class cycloid:
@@ -34,7 +38,7 @@ class cycloid:
     output_holes_N: int
     e: float
     ratio: int
-    cap: cap # disc thickness = cap.bearing_support_flange_thickness + input_bearing.th
+    cap: cap # disc thickness = cap.flange.thickness + input_bearing.th
 
 @dataclass
 class base:
@@ -59,3 +63,30 @@ class top:
     roller_holes_N: int
     cap: cap
     outer_r: float # radius of the base disc
+
+@dataclass
+class eccentric_insert:
+    input_bearing: bearing # journal r = ID/2, journal height = th
+    flange: flange # supports the bearing inner race; r = ID/2 + offset
+    motor: motor # shaft hole r = shaft_r
+    e: float # shaft hole offset from the journal axis
+
+@dataclass
+class output:
+    output_bearing: bearing # journal r = ID/2, journal height = th
+    flange: flange # shoulder supporting the bearing inner race; r = ID/2 + offset
+    plate_r: float
+    plate_t: float
+    output_needle_roller: bearing # pin holes r = ID/2
+    output_holes_R: float
+    output_holes_N: int
+    bore_r: float
+    cap: cap # inner-race cap bolted to the journal top
+
+@dataclass
+class bolt:
+    d: float # shank diameter
+    length: float # under-head length
+    head_d: float
+    head_h: float
+    socket_af: float # hex socket across-flats

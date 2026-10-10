@@ -2,28 +2,48 @@ from build123d import *
 from part_generation_fcns.classdefs import *
 
 
-def check_cap(cp: cap, b: bearing):
+def cap_radii(cp: cap, b: bearing, race: str = "outer") -> tuple[float, float]:
+    """(inner, outer) radius of the cap ring.
+    race="outer": clamps the outer race; inner = OD/2 - offset, outer = cp.r
+    race="inner": clamps the inner race; inner = cp.r, outer = ID/2 + offset"""
+    if race == "outer":
+        return b.OD / 2 - cp.flange.offset, cp.r
+    if race == "inner":
+        return cp.r, b.ID / 2 + cp.flange.offset
+    raise ValueError(f"race must be 'outer' or 'inner', got {race!r}")
+
+
+def check_cap(cp: cap, b: bearing, race: str = "outer"):
     """Validate a cap against the bearing it retains."""
-    ri = b.OD / 2 - cp.bearing_support_flange_offset
+    ri, ro = cap_radii(cp, b, race)
     rh = cp.bearing_retainer_holes
 
-    if ri <= b.ID / 2:
-        print("warning: support flange / cap reaches the bearing inner race")
-    if rh.R - rh.r <= b.OD / 2:
-        raise ValueError("bearing retainer holes overlap the bearing seat")
-    if rh.R + rh.r >= cp.r:
-        raise ValueError("bearing retainer holes break through the cap edge")
+    if race == "outer":
+        if ri <= b.ID / 2:
+            print("warning: support flange / cap reaches the bearing inner race")
+        if rh.R - rh.r <= b.OD / 2:
+            raise ValueError("bearing retainer holes overlap the bearing seat")
+        if rh.R + rh.r >= ro:
+            raise ValueError("bearing retainer holes break through the cap edge")
+    else:
+        if ro >= b.OD / 2:
+            print("warning: support flange / cap reaches the bearing outer race")
+        if rh.R + rh.r >= b.ID / 2:
+            raise ValueError("bearing retainer holes break through the journal")
+        if rh.R - rh.r <= ri:
+            raise ValueError("bearing retainer holes break into the cap bore")
 
 
-def make_cap(cp: cap, b: bearing) -> Part:
-    """Ring clamping the bearing outer race against the support flange."""
-    t = cp.bearing_support_flange_thickness
+def make_cap(cp: cap, b: bearing, race: str = "outer") -> Part:
+    """Ring clamping a bearing race against its support flange."""
+    ri, ro = cap_radii(cp, b, race)
 
     with BuildPart() as part:
         with BuildSketch():
-            Circle(cp.r)
-            Circle(b.OD / 2 - cp.bearing_support_flange_offset, mode=Mode.SUBTRACT)
+            Circle(ro)
+            if ri > 0:
+                Circle(ri, mode=Mode.SUBTRACT)
             with PolarLocations(cp.bearing_retainer_holes.R, cp.bearing_retainer_holes.N):
                 Circle(cp.bearing_retainer_holes.r, mode=Mode.SUBTRACT)
-        extrude(amount=t)
+        extrude(amount=cp.flange.thickness)
     return part.part

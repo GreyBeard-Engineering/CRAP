@@ -19,8 +19,7 @@ def make_test_cycloid() -> cycloid:
         e=1.2,
         ratio=23,
         cap=cap(
-            bearing_support_flange_offset=1.5,
-            bearing_support_flange_thickness=2.0,
+            flange=flange(thickness=2.0, offset=1.5),
             bearing_retainer_holes=patterned_hole(r=1.0, R=12.0, N=4),
             r=15.0,
         ),
@@ -70,7 +69,7 @@ def check_part(c: cycloid, path: str, cap_path: str, r_max: float):
 
     cbb = cap_part.bounding_box()
     assert cap_part.is_valid, "generated cap is not valid"
-    assert abs(cbb.size.Z - c.cap.bearing_support_flange_thickness) < 1e-6, cbb.size
+    assert abs(cbb.size.Z - c.cap.flange.thickness) < 1e-6, cbb.size
     assert abs(cbb.size.X - 2 * c.cap.r) < 1e-3, cbb.size
     print(f"cap ok: volume={cap_part.volume:.1f} mm^3, bbox={cbb.size}, wrote {cap_path}")
 
