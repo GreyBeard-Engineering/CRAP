@@ -1,0 +1,10 @@
+# Python
+__pycache__/
+*.py[cod]
+
+# virtual environments
+venv/
+.venv/
+
+# per-user Claude Code settings (launch.json is shared)
+.claude/settings.local.json

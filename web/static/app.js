@@ -263,7 +263,7 @@ function updateMotion() {
 
   const turns = theta / (2 * Math.PI);
   document.getElementById("readout").textContent =
-    `input  ${turns.toFixed(2)} rev\noutput ${(turns / ratio).toFixed(3)} rev  (${ratio}:1)\ne = ${e} mm`;
+    `input  ${turns.toFixed(2)} rev\noutput ${(turns / ratio).toFixed(3)} rev  (${ratio}:1)\ne = ${display(e)} ${units}`;
 }
 
 function tick() {
@@ -288,6 +288,48 @@ function setStatus(text, cls) {
   statusEl.className = `status ${cls || ""}`;
 }
 
+// ---------- units ----------
+// The model is in mm. Each length input keeps its exact mm value in data-mm and only its
+// display changes with the unit, so toggling back and forth never accumulates rounding.
+const MM_PER = { mm: 1, in: 25.4 };
+let units = "mm";
+try { if (localStorage.getItem("pco-units") === "in") units = "in"; } catch {}
+
+function display(mm) {
+  const v = mm / MM_PER[units];
+  return String(units === "in" ? +v.toFixed(4) : +v.toFixed(3));
+}
+
+function showLength(input) {
+  input.value = display(Number(input.dataset.mm));
+  input.step = String(Number(input.dataset.stepMm) / (units === "in" ? 20 : 1));
+}
+
+function setUnits(u) {
+  units = u;
+  try { localStorage.setItem("pco-units", u); } catch {}
+  document.querySelectorAll("input.len").forEach(showLength);
+  document.querySelectorAll(".unit-name").forEach((el) => (el.textContent = u));
+  for (const b of document.querySelectorAll("[data-units]")) {
+    b.classList.toggle("active", b.dataset.units === u);
+    b.setAttribute("aria-pressed", b.dataset.units === u);
+  }
+}
+
+// typing into a length updates its mm value
+document.addEventListener("input", (ev) => {
+  const input = ev.target;
+  if (!input.classList?.contains("len")) return;
+  const v = Number.parseFloat(input.value);
+  if (Number.isFinite(v)) input.dataset.mm = String(v * MM_PER[units]);
+}, true);
+
+function readLength(input) {
+  const raw = input.value.trim();
+  const ok = raw !== "" && Number.isFinite(Number.parseFloat(raw));
+  return ok ? Number(input.dataset.mm) : NaN;
+}
+
 function field(path, value, type) {
   const label = document.createElement("label");
   label.className = "field";
@@ -296,9 +338,16 @@ function field(path, value, type) {
   span.title = path;
   const input = document.createElement("input");
   input.type = "number";
-  input.step = type === "int" ? "1" : "0.1";
-  input.value = value;
   input.dataset.path = path;
+  if (type === "float") {        // every float is a length
+    input.classList.add("len");
+    input.dataset.mm = String(value);
+    input.dataset.stepMm = "0.1";
+    showLength(input);
+  } else {
+    input.step = "1";
+    input.value = value;
+  }
   input.dataset.type = type;
   label.append(span, input);
   return label;
@@ -386,7 +435,7 @@ function readForm() {
   let ok = true;
   for (const input of form.querySelectorAll("input[data-path]")) {
     const raw = input.value.trim();
-    const v = input.dataset.type === "int" ? Number.parseInt(raw, 10) : Number.parseFloat(raw);
+    const v = input.dataset.type === "int" ? Number.parseInt(raw, 10) : readLength(input);
     const bad = raw === "" || !Number.isFinite(v);
     input.classList.toggle("invalid", bad);
     ok &&= !bad;
@@ -478,7 +527,8 @@ function renderExport() {
     const row = field(k, v, "float");
     row.querySelector("span").textContent = labels[k] ?? k;
     const input = row.querySelector("input");
-    input.step = "0.01";
+    input.dataset.stepMm = "0.01";
+    showLength(input);
     input.min = "0";
     input.dataset.mag = k;
     delete input.dataset.path;      // keep it out of the dimensions form
@@ -525,7 +575,7 @@ function readTolerancing() {
   const magnitudes = {};
   let ok = true;
   for (const input of document.querySelectorAll("input[data-mag]")) {
-    const v = Number.parseFloat(input.value);
+    const v = readLength(input);
     const bad = !Number.isFinite(v) || v < 0;
     input.classList.toggle("invalid", bad);
     ok &&= !bad;
@@ -586,5 +636,7 @@ if (new URLSearchParams(location.search).has("debug")) {
 schema = await (await fetch("/api/defaults")).json();
 renderForm(schema.values);
 renderExport();
+for (const b of document.querySelectorAll("[data-units]")) b.addEventListener("click", () => setUnits(b.dataset.units));
+setUnits(units);
 await rebuild();
 tick();

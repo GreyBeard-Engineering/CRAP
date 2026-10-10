@@ -125,6 +125,11 @@ legend { color: var(--muted); padding: 0 4px; font-size: 12px; }
 fieldset.bare { border: 0; padding: 0; margin: 0; min-width: 0; }
 fieldset.bare:disabled { opacity: 0.45; }
 .export-row { margin-top: 12px; }
+.units { display: flex; flex: none; }
+.units button { flex: none; padding: 6px 10px; border-radius: 0; }
+.units button:first-child { border-radius: 6px 0 0 6px; }
+.units button:last-child { border-radius: 0 6px 6px 0; margin-left: -1px; }
+.units button.active { border-color: var(--accent); color: var(--accent); position: relative; }
 button.primary { background: var(--accent); color: #1a1205; border-color: var(--accent); font-weight: 600; }
 button:disabled { opacity: 0.6; cursor: progress; }
 #section-angle-row[hidden] { display: none; }

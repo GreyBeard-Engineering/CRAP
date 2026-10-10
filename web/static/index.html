@@ -31,7 +31,13 @@
 
     <div id="tab-design" class="panel">
       <section class="controls">
-        <div class="row"><button id="reset" type="button">Reset dimensions</button></div>
+        <div class="row">
+          <button id="reset" type="button">Reset dimensions</button>
+          <div class="units" role="group" aria-label="length units">
+            <button type="button" data-units="mm">mm</button>
+            <button type="button" data-units="in">in</button>
+          </div>
+        </div>
       </section>
       <form id="dims" autocomplete="off"></form>
     </div>
@@ -54,7 +60,7 @@
       <fieldset id="tol-fields" class="bare">
         <details class="section" open>
           <summary>Tolerance magnitudes</summary>
-          <p class="hint">Radial, in mm.</p>
+          <p class="hint">Radial, in <span class="unit-name">mm</span>.</p>
           <div id="tol-magnitudes"></div>
         </details>
         <details class="section">
