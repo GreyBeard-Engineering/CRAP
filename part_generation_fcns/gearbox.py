@@ -64,7 +64,7 @@ class gearbox:
         output_bore_r: float,
         output_cap: cap, # inner-race cap; r is its inner radius
         # export
-        assembly_path: str | None = "gearbox.step",
+        assembly_path: str | None = "steps/gearbox/gearbox.step",
     ):
         self.plate_spacing = plate_spacing
         self.cycloid = cycloid(
@@ -285,7 +285,7 @@ class gearbox:
                 children.append(placed)
         return Compound(children=children, label="gearbox")
 
-    def export_assembly(self, path: str = "gearbox.step") -> Compound:
+    def export_assembly(self, path: str = "steps/gearbox/gearbox.step") -> Compound:
         """Write all parts (nominal), in assembled position, to one STEP file."""
         if os.path.dirname(path):
             os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -320,7 +320,7 @@ class gearbox:
             paths.append(path)
         return paths
 
-    def generate(self, out_dir: str = ".") -> dict[str, Part]:
+    def generate(self, out_dir: str = "steps/gearbox") -> dict[str, Part]:
         """Write every nominal part, at its own origin, to out_dir as separate STEP files."""
         self.export(out_dir)
         return self.parts
@@ -379,6 +379,6 @@ EXAMPLE_KWARGS = dict(
 
 
 if __name__ == "__main__":
-    gb = gearbox(**EXAMPLE_KWARGS, assembly_path="gearbox_out/gearbox.step")
-    for name, part in gb.generate("gearbox_out").items():
+    gb = gearbox(**EXAMPLE_KWARGS)
+    for name, part in gb.generate("steps/gearbox").items():
         print(f"{name}: volume={part.volume:.1f} valid={part.is_valid}")

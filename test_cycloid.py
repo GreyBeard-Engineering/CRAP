@@ -1,6 +1,6 @@
 """Define a test cycloid disc, sanity-check its profile, and generate disc + cap STEP files.
 
-Run:  python test_cycloid.py [output.step] [cap.step]
+Run:  python test_cycloid.py [output.step] [cap.step]   (default: steps/test_cycloid*.step)
 """
 import sys
 import numpy as np
@@ -75,8 +75,8 @@ def check_part(c: cycloid, path: str, cap_path: str, r_max: float):
 
 
 if __name__ == "__main__":
-    out = sys.argv[1] if len(sys.argv) > 1 else "test_cycloid.step"
-    cap_out = sys.argv[2] if len(sys.argv) > 2 else "test_cycloid_cap.step"
+    out = sys.argv[1] if len(sys.argv) > 1 else "steps/test_cycloid.step"
+    cap_out = sys.argv[2] if len(sys.argv) > 2 else "steps/test_cycloid_cap.step"
     c = make_test_cycloid()
     r_max = check_profile(c)
     check_part(c, out, cap_out, r_max)

@@ -1,5 +1,6 @@
 from build123d import *
 from part_generation_fcns.classdefs import *
+from part_generation_fcns.paths import ensure_parent
 from part_generation_fcns.tolerancing import NOMINAL, tolerancing
 from part_generation_fcns.cap_step import check_cap, make_cap
 
@@ -54,13 +55,13 @@ def make_top(tp: top, tol: tolerancing = NOMINAL) -> Part:
     return part.part
 
 
-def make_top_step(tp: top, top_path: str = "top.step", cap_path: str = "top_cap.step") -> tuple[Part, Part]:
+def make_top_step(tp: top, top_path: str = "steps/top.step", cap_path: str = "steps/top_cap.step") -> tuple[Part, Part]:
     """Export top and its cap to separate STEP files, each sitting on z=0."""
     top_part = make_top(tp)
     cap_part = make_cap(tp.cap, tp.output_bearing)
     top_part.label, cap_part.label = "top", "top_cap"
-    export_step(top_part, top_path)
-    export_step(cap_part, cap_path)
+    export_step(top_part, ensure_parent(top_path))
+    export_step(cap_part, ensure_parent(cap_path))
     return top_part, cap_part
 
 

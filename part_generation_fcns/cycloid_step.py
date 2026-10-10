@@ -1,6 +1,7 @@
 import numpy as np
 from build123d import *
 from part_generation_fcns.classdefs import *
+from part_generation_fcns.paths import ensure_parent
 from part_generation_fcns.cap_step import check_cap, make_cap
 from part_generation_fcns.tolerancing import NOMINAL, tolerancing
 
@@ -57,14 +58,14 @@ def make_cycloid(c: cycloid, tol: tolerancing = NOMINAL) -> Part:
     return disc.part
 
 
-def make_cycloid_step(c: cycloid, path: str = "cycloid.step",
-                      cap_path: str = "cycloid_cap.step") -> tuple[Part, Part]:
+def make_cycloid_step(c: cycloid, path: str = "steps/cycloid.step",
+                      cap_path: str = "steps/cycloid_cap.step") -> tuple[Part, Part]:
     """Export cycloid disc and its cap to separate STEP files, each sitting on z=0."""
     disc = make_cycloid(c)
     cap_part = make_cap(c.cap, c.input_bearing)
     disc.label, cap_part.label = "cycloid", "cycloid_cap"
-    export_step(disc, path)
-    export_step(cap_part, cap_path)
+    export_step(disc, ensure_parent(path))
+    export_step(cap_part, ensure_parent(cap_path))
     return disc, cap_part
 
 

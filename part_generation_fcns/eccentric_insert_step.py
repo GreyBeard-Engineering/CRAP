@@ -1,5 +1,6 @@
 from build123d import *
 from part_generation_fcns.classdefs import *
+from part_generation_fcns.paths import ensure_parent
 from part_generation_fcns.tolerancing import NOMINAL, tolerancing
 
 
@@ -35,10 +36,10 @@ def make_eccentric_insert(ei: eccentric_insert, tol: tolerancing = NOMINAL) -> P
     return part.part
 
 
-def make_eccentric_insert_step(ei: eccentric_insert, path: str = "eccentric_insert.step") -> Part:
+def make_eccentric_insert_step(ei: eccentric_insert, path: str = "steps/eccentric_insert.step") -> Part:
     part = make_eccentric_insert(ei)
     part.label = "eccentric_insert"
-    export_step(part, path)
+    export_step(part, ensure_parent(path))
     return part
 
 

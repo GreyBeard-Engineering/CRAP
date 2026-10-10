@@ -1,5 +1,6 @@
 from build123d import *
 from part_generation_fcns.classdefs import *
+from part_generation_fcns.paths import ensure_parent
 from part_generation_fcns.cap_step import check_cap, make_cap
 from part_generation_fcns.tolerancing import NOMINAL, tolerancing
 
@@ -59,14 +60,14 @@ def make_output(o: output, tol: tolerancing = NOMINAL) -> Part:
     return part.part
 
 
-def make_output_step(o: output, path: str = "output.step",
-                     cap_path: str = "output_cap.step") -> tuple[Part, Part]:
+def make_output_step(o: output, path: str = "steps/output.step",
+                     cap_path: str = "steps/output_cap.step") -> tuple[Part, Part]:
     """Export output and its inner-race cap to separate STEP files, each sitting on z=0."""
     part = make_output(o)
     cap_part = make_cap(o.cap, o.output_bearing, race="inner")
     part.label, cap_part.label = "output", "output_cap"
-    export_step(part, path)
-    export_step(cap_part, cap_path)
+    export_step(part, ensure_parent(path))
+    export_step(cap_part, ensure_parent(cap_path))
     return part, cap_part
 
 

@@ -1,6 +1,7 @@
 import numpy as np
 from build123d import *
 from part_generation_fcns.classdefs import *
+from part_generation_fcns.paths import ensure_parent
 from part_generation_fcns.tolerancing import NOMINAL, tolerancing
 
 
@@ -58,10 +59,10 @@ def make_base(b: base, tol: tolerancing = NOMINAL) -> Part:
     return part.part
 
 
-def make_base_step(b: base, path: str = "base.step") -> Part:
+def make_base_step(b: base, path: str = "steps/base.step") -> Part:
     part = make_base(b)
     part.label = "base"
-    export_step(part, path)
+    export_step(part, ensure_parent(path))
     return part
 
 
