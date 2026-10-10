@@ -1,12 +1,13 @@
-from dataclasses import dataclass
 import numpy as np
 from build123d import *
 from part_generation_fcns.classdefs import *
 from part_generation_fcns.cap_step import check_cap, make_cap
+from part_generation_fcns.tolerancing import NOMINAL, tolerancing
 
-def cycloid_profile(c: cycloid, pts_per_lobe: int = 60) -> np.ndarray:
-    """Points on the disc outline (pin-offset epitrochoid)."""
-    roller_r = c.roller_bearing.OD / 2
+def cycloid_profile(c: cycloid, pts_per_lobe: int = 60, clearance: float = 0.0) -> np.ndarray:
+    """Points on the disc outline (pin-offset epitrochoid). The profile is the trochoid
+    offset by the roller radius, so clearance just adds to that offset."""
+    roller_r = c.roller_bearing.OD / 2 + clearance
     n = c.ratio + 1  # number of ring rollers
     th = np.linspace(0, 2 * np.pi, c.ratio * pts_per_lobe, endpoint=False)
     psi = np.arctan2(np.sin((1 - n) * th),
@@ -25,7 +26,7 @@ def cycloid_thickness(c: cycloid) -> float:
     return c.cap.flange.thickness + c.input_bearing.th
 
 
-def make_cycloid(c: cycloid) -> Part:
+def make_cycloid(c: cycloid, tol: tolerancing = NOMINAL) -> Part:
     n = c.ratio + 1
     if c.roller_R / (c.e * n) <= 1:
         raise ValueError("roller_R / (e * (ratio+1)) must be > 1 (profile cusps)")
@@ -35,19 +36,19 @@ def make_cycloid(c: cycloid) -> Part:
         raise ValueError("cap would cover the output holes")
 
     tf = c.cap.flange.thickness
-    rb = c.input_bearing.OD / 2
-    pts = [tuple(p) for p in cycloid_profile(c)]
+    rb = c.input_bearing.OD / 2 + tol.delta("cycloid.bearing_seat")
+    pts = [tuple(p) for p in cycloid_profile(c, clearance=tol.clearance)]
 
     with BuildPart() as disc:
         with BuildSketch():
             with BuildLine():
                 Spline(*pts, periodic=True)
             make_face()
-            Circle(rb - c.cap.flange.offset, mode=Mode.SUBTRACT)  # flange lip bore
+            Circle(c.input_bearing.OD / 2 - c.cap.flange.offset, mode=Mode.SUBTRACT)  # flange lip bore
             with PolarLocations(oh.R, oh.N):
-                Circle(oh.r, mode=Mode.SUBTRACT)
+                Circle(oh.r + tol.clearance, mode=Mode.SUBTRACT)
             with PolarLocations(c.cap.bearing_retainer_holes.R, c.cap.bearing_retainer_holes.N):
-                Circle(c.cap.bearing_retainer_holes.r, mode=Mode.SUBTRACT)
+                Circle(c.cap.bearing_retainer_holes.r + tol.delta("cycloid.retainer_holes"), mode=Mode.SUBTRACT)
         extrude(amount=cycloid_thickness(c))
         # bearing seat above the flange lip
         with BuildSketch(Plane.XY.offset(tf)):

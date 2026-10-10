@@ -1,0 +1,159 @@
+"""Live gearbox viewer.  Run:  python -m uvicorn web.server:app --port 8000"""
+import dataclasses
+import inspect
+import io
+import json
+import tempfile
+import threading
+import zipfile
+from pathlib import Path
+
+from fastapi import Body, FastAPI
+from fastapi.concurrency import run_in_threadpool
+from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.staticfiles import StaticFiles
+
+from part_generation_fcns.gearbox import EXAMPLE_KWARGS, gearbox
+from part_generation_fcns.tolerancing import DEFAULT_MAGNITUDES, FEATURES, tolerancing
+from web.mesh import gearbox_payload
+
+STATIC = Path(__file__).parent / "static"
+app = FastAPI(title="PCO: Parametric Cycloid Optimizer")
+app.mount("/static", StaticFiles(directory=STATIC), name="static")
+_build_lock = threading.Lock()
+
+# constructor argument -> type (dataclass, int or float); assembly_path is not user-facing
+_ARG_TYPES = {name: p.annotation for name, p in inspect.signature(gearbox.__init__).parameters.items()
+              if name not in ("self", "assembly_path")}
+
+
+# Design tab layout: assembly-level values pinned on top, then tabs (a tab holds either a
+# list of constructor arguments or further sub-tabs)
+LAYOUT = {
+    "pinned": ["ratio", "e", "plate_spacing"],
+    "tabs": {
+        "Bearings": ["roller_bearing", "input_bearing", "output_needle_roller", "output_bearing"],
+        "Parts": {
+            "Housing": ["roller_R", "outer_r"],
+            "Cycloid": ["output_holes_R", "output_holes_N", "cycloid_cap"],
+            "Base": ["drive_motor", "shaft_hole_offset", "base_t", "mounting_holes", "mounting_hole_offset",
+                     "mounting_hole_fillet_r"],
+            "Top": ["output_bearing_offset", "top_base_thickness", "top_cap"],
+            "Eccentric insert": ["eccentric_insert_flange_offset"],
+            "Output": ["output_flange_offset", "output_plate_r", "output_plate_t", "output_bore_r", "output_cap"],
+        },
+    },
+}
+LABELS = {"ratio": "gearbox ratio", "plate_spacing": "plate spacing", "e": "eccentricity e"}
+
+
+def _layout_args(node) -> list[str]:
+    if isinstance(node, list):
+        return node
+    return [a for child in node.values() for a in _layout_args(child)]
+
+
+_laid_out = LAYOUT["pinned"] + _layout_args(LAYOUT["tabs"])
+assert sorted(_laid_out) == sorted(_ARG_TYPES), "LAYOUT out of sync with gearbox()"
+
+
+def _types(tp):
+    """Mirror of a value's structure with "int" / "float" leaves."""
+    if dataclasses.is_dataclass(tp):
+        return {f.name: _types(f.type) for f in dataclasses.fields(tp)}
+    return tp.__name__
+
+
+def _to_json(v):
+    return dataclasses.asdict(v) if dataclasses.is_dataclass(v) else v
+
+
+def _from_json(tp, v):
+    if dataclasses.is_dataclass(tp):
+        return tp(**{f.name: _from_json(f.type, v[f.name]) for f in dataclasses.fields(tp)})
+    return tp(v)
+
+
+def _build(kwargs: dict) -> dict:
+    with _build_lock:
+        gb = gearbox(**kwargs, assembly_path=None)
+        return gearbox_payload(gb)
+
+
+@app.get("/")
+def index():
+    return FileResponse(STATIC / "index.html")
+
+
+@app.get("/api/defaults")
+def defaults():
+    return {
+        "values": {k: _to_json(v) for k, v in EXAMPLE_KWARGS.items()},
+        "types": {k: _types(tp) for k, tp in _ARG_TYPES.items()},
+        "layout": LAYOUT,
+        "labels": LABELS,
+        "tolerancing": {
+            "magnitudes": DEFAULT_MAGNITUDES,
+            "features": [{"id": k, "part": v[0], "label": v[1], "kind": v[2], "shape": v[3], "default": v[4]}
+                         for k, v in FEATURES.items()],
+        },
+    }
+
+
+def _kwargs(body: dict) -> dict:
+    return {k: _from_json(_ARG_TYPES[k], body["kwargs"][k]) for k in _ARG_TYPES}
+
+
+def _export_zip(kwargs: dict, tol: tolerancing, fmt: str, scope: str) -> bytes:
+    with _build_lock:
+        gb = gearbox(**kwargs, assembly_path=None)
+        with tempfile.TemporaryDirectory() as d:
+            paths = gb.export(d, tol, fmt, scope)
+            buf = io.BytesIO()
+            with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+                for p in paths:
+                    z.write(p, Path(p).name)
+                z.writestr("export_settings.json", json.dumps({
+                    "format": fmt, "scope": scope,
+                    "tolerancing": dataclasses.asdict(tol),
+                    "dimensions": {k: _to_json(v) for k, v in kwargs.items()},
+                }, indent=2))
+            return buf.getvalue()
+
+
+@app.post("/api/export")
+async def export(body: dict = Body(...)):
+    try:
+        kwargs = _kwargs(body)
+        t = body.get("tolerancing", {})
+        tol = tolerancing(enabled=bool(t.get("enabled", False)),
+                          **{k: float(t.get("magnitudes", {}).get(k, v)) for k, v in DEFAULT_MAGNITUDES.items()},
+                          fits={**{k: v[4] for k, v in FEATURES.items()}, **t.get("fits", {})})
+        fmt, scope = body.get("format", "step"), body.get("scope", "all")
+    except (KeyError, TypeError, ValueError) as ex:
+        return JSONResponse({"error": f"bad input: {ex}"}, status_code=422)
+    try:
+        data = await run_in_threadpool(_export_zip, kwargs, tol, fmt, scope)
+    except ValueError as ex:
+        return JSONResponse({"error": str(ex)}, status_code=422)
+    except Exception as ex:
+        return JSONResponse({"error": f"CAD kernel failed: {ex}"}, status_code=422)
+    name = f"gearbox_{scope}_{fmt}{'_toleranced' if tol.enabled else ''}.zip"
+    return Response(data, media_type="application/zip",
+                    headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
+
+@app.post("/api/build")
+async def build(body: dict = Body(...)):
+    seq = body.get("seq")
+    try:
+        kwargs = _kwargs(body)
+    except (KeyError, TypeError, ValueError) as ex:
+        return JSONResponse({"seq": seq, "error": f"bad input: {ex}"}, status_code=422)
+    try:
+        payload = await run_in_threadpool(_build, kwargs)
+    except (ValueError, ZeroDivisionError) as ex:   # geometry checks in the generators
+        return JSONResponse({"seq": seq, "error": str(ex)}, status_code=422)
+    except Exception as ex:                         # OCC failures on odd inputs
+        return JSONResponse({"seq": seq, "error": f"CAD kernel failed: {ex}"}, status_code=422)
+    return {"seq": seq, **payload}

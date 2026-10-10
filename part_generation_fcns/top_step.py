@@ -1,5 +1,6 @@
 from build123d import *
 from part_generation_fcns.classdefs import *
+from part_generation_fcns.tolerancing import NOMINAL, tolerancing
 from part_generation_fcns.cap_step import check_cap, make_cap
 
 
@@ -27,9 +28,10 @@ def _check_top(tp: top):
         raise ValueError("base_thickness must be less than the tower height")
 
 
-def make_top(tp: top) -> Part:
+def make_top(tp: top, tol: tolerancing = NOMINAL) -> Part:
     _check_top(tp)
     rb, ri, rw, H = _radii(tp)
+    rb += tol.delta("top.bearing_seat")
     tf, tb = tp.cap.flange.thickness, tp.base_thickness
 
     with BuildPart() as part:
@@ -43,11 +45,11 @@ def make_top(tp: top) -> Part:
 
         with BuildSketch():
             with PolarLocations(tp.roller_holes_R, tp.roller_holes_N):
-                Circle(tp.roller_bearing.ID / 2)
+                Circle(tp.roller_bearing.ID / 2 + tol.delta("top.roller_holes"))
         extrude(amount=tb, mode=Mode.SUBTRACT)
         with BuildSketch():
             with PolarLocations(tp.cap.bearing_retainer_holes.R, tp.cap.bearing_retainer_holes.N):
-                Circle(tp.cap.bearing_retainer_holes.r)
+                Circle(tp.cap.bearing_retainer_holes.r + tol.delta("top.retainer_holes"))
         extrude(amount=H, mode=Mode.SUBTRACT)
     return part.part
 

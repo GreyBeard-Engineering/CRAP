@@ -1,6 +1,7 @@
 from build123d import *
 from part_generation_fcns.classdefs import *
 from part_generation_fcns.cap_step import check_cap, make_cap
+from part_generation_fcns.tolerancing import NOMINAL, tolerancing
 
 
 def output_height(o: output) -> float:
@@ -25,7 +26,7 @@ def _check_output(o: output):
         print("warning: output cap inner radius is smaller than the bore")
 
 
-def make_output(o: output) -> Part:
+def make_output(o: output, tol: tolerancing = NOMINAL) -> Part:
     """Revolved profile: plate carrying the output pins, shoulder supporting the
     output bearing inner race, journal through the bearing."""
     _check_output(o)
@@ -34,25 +35,26 @@ def make_output(o: output) -> Part:
     tp = o.plate_t
     ts = tp + o.flange.thickness
     H = output_height(o)
+    rjt = rj + tol.delta("output.journal")
 
     with BuildPart() as part:
         # (r, z) cross-section, revolved about Z
         with BuildSketch(Plane.XZ):
             with BuildLine():
                 Polyline((0, 0), (o.plate_r, 0), (o.plate_r, tp), (rs, tp),
-                         (rs, ts), (rj, ts), (rj, H), (0, H), close=True)
+                         (rs, ts), (rjt, ts), (rjt, H), (0, H), close=True)
             make_face()
         revolve(axis=Axis.Z)
 
         with BuildSketch():
             with PolarLocations(o.output_holes_R, o.output_holes_N):
-                Circle(o.output_needle_roller.ID / 2)
+                Circle(o.output_needle_roller.ID / 2 + tol.delta("output.needle_holes"))
         extrude(amount=tp, mode=Mode.SUBTRACT)
         with BuildSketch():
             if o.bore_r > 0:
                 Circle(o.bore_r)
             with PolarLocations(o.cap.bearing_retainer_holes.R, o.cap.bearing_retainer_holes.N):
-                Circle(o.cap.bearing_retainer_holes.r)
+                Circle(o.cap.bearing_retainer_holes.r + tol.delta("output.retainer_holes"))
         extrude(amount=H, mode=Mode.SUBTRACT)
     return part.part
 

@@ -58,6 +58,6 @@ def spacer_r(b: bearing) -> float:
     return (b.ID + b.OD) / 4
 
 
-def make_spacer(b: bearing, h: float) -> Part:
+def make_spacer(b: bearing, h: float, bore_delta: float = 0.0) -> Part:
     """Spacer riding on a bearing's pin, contacting only its inner race."""
-    return bored_cylinder(spacer_r(b), b.ID / 2, h)
+    return bored_cylinder(spacer_r(b), b.ID / 2 + bore_delta, h)

@@ -1,2 +1,4 @@
 build123d
 numpy
+fastapi
+uvicorn

@@ -1,17 +1,19 @@
 from build123d import *
 from part_generation_fcns.classdefs import *
+from part_generation_fcns.tolerancing import NOMINAL, tolerancing
 
 
 def eccentric_insert_thickness(ei: eccentric_insert) -> float:
     return ei.flange.thickness + ei.input_bearing.th
 
 
-def make_eccentric_insert(ei: eccentric_insert) -> Part:
+def make_eccentric_insert(ei: eccentric_insert, tol: tolerancing = NOMINAL) -> Part:
     """Revolved L: flange supporting the bearing inner race, journal through the bearing,
     and a motor shaft hole offset from the journal axis by e."""
     rj = ei.input_bearing.ID / 2           # journal
     rf = rj + ei.flange.offset             # flange
     tf, H = ei.flange.thickness, eccentric_insert_thickness(ei)
+    rjt = rj + tol.delta("eccentric_insert.journal")
 
     if ei.motor.shaft_r + ei.e >= rj:
         raise ValueError("motor shaft hole breaks through the journal (shaft_r + e >= input_bearing.ID/2)")
@@ -22,13 +24,13 @@ def make_eccentric_insert(ei: eccentric_insert) -> Part:
         # (r, z) cross-section, revolved about the journal axis
         with BuildSketch(Plane.XZ):
             with BuildLine():
-                Polyline((0, 0), (rf, 0), (rf, tf), (rj, tf), (rj, H), (0, H), close=True)
+                Polyline((0, 0), (rf, 0), (rf, tf), (rjt, tf), (rjt, H), (0, H), close=True)
             make_face()
         revolve(axis=Axis.Z)
 
         with BuildSketch():
             with Locations((ei.e, 0)):
-                Circle(ei.motor.shaft_r)
+                Circle(ei.motor.shaft_r + tol.delta("eccentric_insert.shaft_hole"))
         extrude(amount=H, mode=Mode.SUBTRACT)
     return part.part
 

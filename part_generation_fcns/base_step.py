@@ -1,6 +1,7 @@
 import numpy as np
 from build123d import *
 from part_generation_fcns.classdefs import *
+from part_generation_fcns.tolerancing import NOMINAL, tolerancing
 
 
 def _check_base(b: base):
@@ -21,7 +22,7 @@ def _check_base(b: base):
         raise ValueError("mounting tab wider than the base")
 
 
-def make_base(b: base) -> Part:
+def make_base(b: base, tol: tolerancing = NOMINAL) -> Part:
     _check_base(b)
     ring_r = b.mounting_holes.r + b.mounting_hole_offset
     tab_angles = np.radians(np.arange(b.mounting_holes.N) * 360 / b.mounting_holes.N)
@@ -48,11 +49,11 @@ def make_base(b: base) -> Part:
 
             Circle(b.drive_motor.shaft_r + b.shaft_hole_offset, mode=Mode.SUBTRACT)
             with PolarLocations(b.drive_motor.mounting_holes.R, b.drive_motor.mounting_holes.N):
-                Circle(b.drive_motor.mounting_holes.r, mode=Mode.SUBTRACT)
+                Circle(b.drive_motor.mounting_holes.r + tol.delta("base.motor_holes"), mode=Mode.SUBTRACT)
             with PolarLocations(b.roller_holes_R, b.roller_holes_N):
-                Circle(b.roller_bearing.ID / 2, mode=Mode.SUBTRACT)
+                Circle(b.roller_bearing.ID / 2 + tol.delta("base.roller_holes"), mode=Mode.SUBTRACT)
             with PolarLocations(b.mounting_holes.R, b.mounting_holes.N):
-                Circle(b.mounting_holes.r, mode=Mode.SUBTRACT)
+                Circle(b.mounting_holes.r + tol.delta("base.mounting_holes"), mode=Mode.SUBTRACT)
         extrude(amount=b.t)
     return part.part
 

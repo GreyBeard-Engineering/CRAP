@@ -34,8 +34,9 @@ def check_cap(cp: cap, b: bearing, race: str = "outer"):
             raise ValueError("bearing retainer holes break into the cap bore")
 
 
-def make_cap(cp: cap, b: bearing, race: str = "outer") -> Part:
-    """Ring clamping a bearing race against its support flange."""
+def make_cap(cp: cap, b: bearing, race: str = "outer", hole_delta: float = 0.0) -> Part:
+    """Ring clamping a bearing race against its support flange. hole_delta grows (or, if
+    negative, shrinks) the screw holes."""
     ri, ro = cap_radii(cp, b, race)
 
     with BuildPart() as part:
@@ -44,6 +45,6 @@ def make_cap(cp: cap, b: bearing, race: str = "outer") -> Part:
             if ri > 0:
                 Circle(ri, mode=Mode.SUBTRACT)
             with PolarLocations(cp.bearing_retainer_holes.R, cp.bearing_retainer_holes.N):
-                Circle(cp.bearing_retainer_holes.r, mode=Mode.SUBTRACT)
+                Circle(cp.bearing_retainer_holes.r + hole_delta, mode=Mode.SUBTRACT)
         extrude(amount=cp.flange.thickness)
     return part.part

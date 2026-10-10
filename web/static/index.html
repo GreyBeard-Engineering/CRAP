@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PCO</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <aside id="sidebar">
+    <header>
+      <div class="brand">
+        <h1>PCO</h1>
+        <div class="tagline">Parametric Cycloid Optimizer</div>
+      </div>
+      <div id="status" class="status">loading…</div>
+    </header>
+    <nav class="tabs" role="tablist">
+      <button type="button" role="tab" class="tab active" data-tab="design" aria-selected="true">Manual Configuration</button>
+      <button type="button" role="tab" class="tab" data-tab="export" aria-selected="false">Export</button>
+    </nav>
+    <div id="error" class="error" hidden></div>
+
+    <div id="tab-design" class="panel">
+      <section class="controls">
+        <div class="row"><button id="reset" type="button">Reset dimensions</button></div>
+      </section>
+      <form id="dims" autocomplete="off"></form>
+    </div>
+
+    <div id="tab-export" class="panel" hidden>
+      <section class="controls">
+        <label class="check"><input id="tol-enabled" type="checkbox" checked> apply tolerances</label>
+        <label class="field"><span>format</span>
+          <select id="export-format"><option value="step">STEP</option><option value="stl">STL</option></select>
+        </label>
+        <label class="field"><span>parts</span>
+          <select id="export-scope">
+            <option value="all">every part</option>
+            <option value="custom">custom parts only</option>
+          </select>
+        </label>
+        <p class="hint">Custom parts are the ones this model dimensions (plates, caps, cycloid, insert, output,
+          spacers). Stock parts are the bearings, bolts and pins. STEP exports also include the assembled gearbox.</p>
+      </section>
+      <fieldset id="tol-fields" class="bare">
+        <details class="section" open>
+          <summary>Tolerance magnitudes</summary>
+          <p class="hint">Radial, in mm.</p>
+          <div id="tol-magnitudes"></div>
+        </details>
+        <details class="section">
+          <summary>Advanced fits</summary>
+          <p class="hint">Bolt holes: tight shrinks by <em>threaded</em>, loose grows by <em>loose</em>.
+            Bearing fits: loose gives clearance, tight interference, both by <em>bearing</em>.</p>
+          <div id="tol-fits"></div>
+          <div class="row"><button id="fits-reset" type="button">Reset fits</button></div>
+        </details>
+      </fieldset>
+      <div class="row export-row"><button id="export-btn" type="button" class="primary">Download export (.zip)</button></div>
+      <div id="export-status" class="hint"></div>
+    </div>
+  </aside>
+  <button id="menu" type="button" aria-label="toggle parameters">☰</button>
+  <main id="view"></main>
+  <button id="view-menu" type="button" aria-label="toggle view options">◐</button>
+  <aside id="viewpanel" aria-label="view options">
+    <h2>View</h2>
+    <div id="view-buttons" role="group" aria-label="camera views">
+      <button type="button" data-view="x" title="look along X">X</button>
+      <button type="button" data-view="y" title="look along Y">Y</button>
+      <button type="button" data-view="z" title="look down the gearbox axis (Z)">Z</button>
+      <button type="button" data-view="home" title="home view">⌂</button>
+    </div>
+
+    <h2>Motion</h2>
+    <section class="controls">
+      <label>input speed <input id="speed" type="range" min="0" max="12" step="0.1" value="3"></label>
+      <div class="row"><button id="pause" type="button">Pause</button></div>
+      <div id="readout" class="readout"></div>
+    </section>
+
+    <h2>Display</h2>
+    <section class="controls">
+      <label class="check"><input id="hardware" type="checkbox" checked> stock parts</label>
+      <label class="check"><input id="section" type="checkbox"> section view</label>
+      <label id="section-angle-row">section angle <input id="section-angle" type="range" min="-180" max="180" step="1" value="0"></label>
+    </section>
+
+    <h2>Custom parts</h2>
+    <nav id="parts-bar" aria-label="custom part visibility"></nav>
+  </aside>
+  <script type="module" src="/static/app.js"></script>
+</body>
+</html>
