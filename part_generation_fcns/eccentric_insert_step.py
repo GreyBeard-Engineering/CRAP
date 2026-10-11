@@ -1,6 +1,6 @@
 from build123d import *
 from part_generation_fcns.classdefs import *
-from part_generation_fcns.errors import GeometryError
+from part_generation_fcns.errors import GeometryError, geometry_issue
 from part_generation_fcns.paths import ensure_parent
 from part_generation_fcns.tolerancing import NOMINAL, tolerancing
 
@@ -18,7 +18,7 @@ def make_eccentric_insert(ei: eccentric_insert, tol: tolerancing = NOMINAL) -> P
     rjt = rj + tol.delta("eccentric_insert.journal")
 
     if ei.motor.shaft_r + ei.e >= rj:
-        raise GeometryError("insert.shaft_hole_breaks_journal", "motor shaft hole breaks through the journal (shaft_r + e >= input_bearing.ID/2)")
+        geometry_issue("insert.shaft_hole_breaks_journal", "motor shaft hole breaks through the journal (shaft_r + e >= input_bearing.ID/2)")
     if rf >= ei.input_bearing.OD / 2:
         print("warning: insert flange reaches the input bearing outer race")
 

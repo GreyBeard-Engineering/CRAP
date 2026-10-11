@@ -11,6 +11,7 @@ class patterned_hole:
     r: float
     R: float
     N: int
+    start_angle: float = 0.0 # degrees from +X to the first hole
 
 @dataclass
 class motor:

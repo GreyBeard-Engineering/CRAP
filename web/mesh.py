@@ -40,6 +40,18 @@ def tessellate(part: Part, tol: float = 0.05) -> dict:
     return {"verts": _b64(v), "tris": _b64(t), "n_verts": len(v), "n_tris": len(t)}
 
 
+def collision_meshes(gb: gearbox, collisions, limit: int = 80) -> list[dict]:
+    """The overlapping volume of each colliding pair, tessellated in assembly coordinates."""
+    placed = {p.label: p for p in gb.assembly().children}
+    out = []
+    for a, b, v in collisions[:limit]:
+        common = placed[a] & placed[b]
+        if common is None:
+            continue
+        out.append({"a": a, "b": b, "volume": round(v, 3), **tessellate(common, 0.02)})
+    return out
+
+
 def matrix(loc: Location) -> list[float]:
     """4x4 transform, column-major (three.js Matrix4.fromArray order)."""
     tr = loc.wrapped.Transformation()

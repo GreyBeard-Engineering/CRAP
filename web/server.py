@@ -16,7 +16,7 @@ from fastapi.staticfiles import StaticFiles
 from part_generation_fcns.gearbox import EXAMPLE_KWARGS, gearbox
 from part_generation_fcns.solver import SolveError, simple_spec, solve, spec_from_kwargs
 from part_generation_fcns.tolerancing import DEFAULT_MAGNITUDES, FEATURES, tolerancing
-from web.mesh import gearbox_payload
+from web.mesh import collision_meshes, gearbox_payload
 
 STATIC = Path(__file__).parent / "static"
 app = FastAPI(title="CRAP: Cycloidal Reducer Algorithm & Parametrizer")
@@ -35,9 +35,9 @@ _build_lock = threading.Lock()
 _progress = {"stage": "idle"}          # what a simple-mode build is doing, for /api/progress
 _solved: dict[str, object] = {}       # simple spec (json) -> SolveResult, so export needn't re-solve
 
-# constructor argument -> type (dataclass, int or float); assembly_path is not user-facing
+# constructor argument -> type (dataclass, int or float); assembly_path and strict are not user-facing
 _ARG_TYPES = {name: p.annotation for name, p in inspect.signature(gearbox.__init__).parameters.items()
-              if name not in ("self", "assembly_path")}
+              if name not in ("self", "assembly_path", "strict")}
 
 
 # Manual Configuration layout: always-visible boxes on top, then tabs (a tab holds either a
@@ -98,8 +98,10 @@ def _to_json(v):
 
 
 def _from_json(tp, v):
+    """Rebuild a (nested) dataclass from JSON; fields with defaults may be omitted."""
     if dataclasses.is_dataclass(tp):
-        return tp(**{f.name: _from_json(f.type, v[f.name]) for f in dataclasses.fields(tp)})
+        return tp(**{f.name: _from_json(f.type, v[f.name]) for f in dataclasses.fields(tp)
+                     if f.name in v or f.default is dataclasses.MISSING})
     return tp(v)
 
 
@@ -109,11 +111,22 @@ def _build(body: dict, kwargs: dict) -> dict:
             kwargs, res = _resolve(body, kwargs)
         finally:
             _progress.update(stage="idle")
-        if res is None:
-            return gearbox_payload(gearbox(**kwargs, assembly_path=None))
+        if res is None:     # advanced: build what it can and report problems rather than refuse
+            gb = gearbox(**kwargs, assembly_path=None, strict=False)
+            for code, msg in gb.issues:
+                print(f"[build] issue {code}: {msg}", flush=True)
+            return {**gearbox_payload(gb), "issues": [m for _, m in gb.issues], "collision_meshes": []}
+        if not res.ok:      # the GUI only lists colliding parts; the details go to the log
+            for msg in res.problems:
+                print(f"[solver] problem: {msg}", flush=True)
+            for line in res.log:
+                print(f"[solver] tried: {line}", flush=True)
+            print(f"[solver] {len(res.collisions)} colliding pairs", flush=True)
         return {**gearbox_payload(res.gearbox),
                 "derived": {k: _to_json(v) for k, v in kwargs.items()},
-                "solver": _solver_report(res)}
+                "solver": _solver_report(res),
+                "issues": res.problems,
+                "collision_meshes": collision_meshes(res.gearbox, res.collisions)}
 
 
 @app.get("/api/progress")
@@ -151,7 +164,7 @@ def _solve(kwargs: dict):
     spec = spec_from_kwargs(kwargs)
     key = json.dumps(dataclasses.asdict(spec), sort_keys=True)
     if key not in _solved:
-        res = solve(spec, progress=lambda stage: _progress.update(stage=stage))
+        res = solve(spec, progress=lambda stage: _progress.update(stage=stage), best_effort=True)
         if len(_solved) > 32:
             _solved.clear()
         _solved[key] = res
@@ -167,14 +180,18 @@ def _resolve(body: dict, kwargs: dict):
 
 
 def _solver_report(res) -> dict:
-    return {"iterations": res.iterations, "log": res.log, "check_seconds": round(res.check_seconds, 1),
+    return {"ok": res.ok, "problems": res.problems, "iterations": res.iterations, "log": res.log,
+            "check_seconds": round(res.check_seconds, 1),
             "collisions": [[a, b, round(v, 3)] for a, b, v in res.collisions]}
 
 
 def _export_zip(body: dict, kwargs: dict, tol: tolerancing, fmt: str, scope: str) -> bytes:
     with _build_lock:
-        kwargs, _ = _resolve(body, kwargs)
-        gb = gearbox(**kwargs, assembly_path=None)
+        kwargs, res = _resolve(body, kwargs)
+        if res is not None and not res.ok:
+            raise ValueError("this design has unresolved problems; fix them (or revert to the last "
+                             "valid design) before exporting")
+        gb = gearbox(**kwargs, assembly_path=None)      # strict: refuses designs with problems
         with tempfile.TemporaryDirectory() as d:
             paths = gb.export(d, tol, fmt, scope)
             buf = io.BytesIO()

@@ -1,7 +1,7 @@
 import numpy as np
 from build123d import *
 from part_generation_fcns.classdefs import *
-from part_generation_fcns.errors import GeometryError
+from part_generation_fcns.errors import GeometryError, geometry_issue
 from part_generation_fcns.paths import ensure_parent
 from part_generation_fcns.cap_step import cap_radii, check_cap, make_cap
 from part_generation_fcns.tolerancing import NOMINAL, tolerancing
@@ -32,6 +32,22 @@ def output_holes(c: cycloid) -> patterned_hole:
     return patterned_hole(r=c.output_needle_roller.OD / 2 + c.e, R=c.output_holes_R, N=c.output_holes_N)
 
 
+def cap_reaches_output_holes(c: cycloid) -> bool:
+    """True when the cycloid cap extends over the output holes, so it needs the holes too."""
+    oh = output_holes(c)
+    return cap_radii(c.cap, c.input_bearing)[1] > oh.R - oh.r
+
+
+def cap_screw_hole_gap(c: cycloid) -> float:
+    """Smallest edge-to-edge distance between a cap screw hole and an output hole."""
+    oh, rh = output_holes(c), c.cap.bearing_retainer_holes
+    a = np.radians(oh.start_angle + np.arange(oh.N) * 360 / oh.N)
+    b = np.radians(rh.start_angle + np.arange(rh.N) * 360 / rh.N)
+    d = np.hypot(oh.R * np.cos(a)[:, None] - rh.R * np.cos(b)[None, :],
+                 oh.R * np.sin(a)[:, None] - rh.R * np.sin(b)[None, :])
+    return float(d.min() - oh.r - rh.r)
+
+
 def cycloid_thickness(c: cycloid) -> float:
     return c.cap.flange.thickness + c.input_bearing.th
 
@@ -39,14 +55,21 @@ def cycloid_thickness(c: cycloid) -> float:
 def make_cycloid(c: cycloid, tol: tolerancing = NOMINAL) -> Part:
     n = c.ratio + 1
     if c.roller_R / (c.e * n) <= 1:
-        raise GeometryError("cycloid.cusps", "roller_R / (e * (ratio+1)) must be > 1 (profile cusps)")
+        geometry_issue("cycloid.cusps", "roller_R / (e * (ratio+1)) must be > 1 (profile cusps)")
     if profile_undercuts(c):
-        raise GeometryError("cycloid.undercut", "the roller is too large for this e / ratio / roller R: "
+        geometry_issue("cycloid.undercut", "the roller is too large for this e / ratio / roller R: "
                             "the cycloid profile undercuts (reduce e or the roller OD, or increase roller R)")
     check_cap(c.cap, c.input_bearing, name="cycloid_cap")
     oh = output_holes(c)
-    if cap_radii(c.cap, c.input_bearing)[1] >= oh.R - oh.r:
-        raise GeometryError("cycloid.cap_covers_output_holes", "cap would cover the output holes")
+    if cap_reaches_output_holes(c):
+        # the cap gets the output holes too; its screws must sit clear of them, and it must
+        # stay inside the disc
+        if cap_screw_hole_gap(c) <= 0:
+            geometry_issue("cycloid.cap_screws_hit_output_holes",
+                                "cycloid cap screw holes run into the output holes")
+        root = c.roller_R - c.roller_bearing.OD / 2 - c.e
+        if cap_radii(c.cap, c.input_bearing)[1] >= root:
+            geometry_issue("cycloid.cap_past_disc_edge", "cycloid cap reaches past the cycloid's edge")
 
     tf = c.cap.flange.thickness
     rb = c.input_bearing.OD / 2 + tol.delta("cycloid.bearing_seat")
@@ -60,7 +83,7 @@ def make_cycloid(c: cycloid, tol: tolerancing = NOMINAL) -> Part:
             Circle(c.input_bearing.OD / 2 - c.cap.flange.offset, mode=Mode.SUBTRACT)  # flange lip bore
             with PolarLocations(oh.R, oh.N):
                 Circle(oh.r + tol.clearance, mode=Mode.SUBTRACT)
-            with PolarLocations(c.cap.bearing_retainer_holes.R, c.cap.bearing_retainer_holes.N):
+            with PolarLocations(c.cap.bearing_retainer_holes.R, c.cap.bearing_retainer_holes.N, start_angle=c.cap.bearing_retainer_holes.start_angle):
                 Circle(c.cap.bearing_retainer_holes.r + tol.delta("cycloid.retainer_holes"), mode=Mode.SUBTRACT)
         extrude(amount=cycloid_thickness(c))
         # bearing seat above the flange lip

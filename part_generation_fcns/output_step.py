@@ -1,6 +1,6 @@
 from build123d import *
 from part_generation_fcns.classdefs import *
-from part_generation_fcns.errors import GeometryError
+from part_generation_fcns.errors import GeometryError, geometry_issue
 from part_generation_fcns.paths import ensure_parent
 from part_generation_fcns.cap_step import cap_radii, check_cap, make_cap
 from part_generation_fcns.tolerancing import NOMINAL, tolerancing
@@ -23,11 +23,11 @@ def _check_output(o: output):
     if rs >= o.output_bearing.OD / 2:
         print("warning: output shoulder reaches the output bearing outer race")
     if o.output_holes_R - pin_r <= rs:
-        raise GeometryError("output.holes_overlap_shoulder", "output pin holes overlap the shoulder")
+        geometry_issue("output.holes_overlap_shoulder", "output pin holes overlap the shoulder")
     if o.plate_edge_offset <= 0:
-        raise GeometryError("output.plate_edge_offset", "plate_edge_offset must be > 0 (pin holes would break through the plate edge)")
+        geometry_issue("output.plate_edge_offset", "plate_edge_offset must be > 0 (pin holes would break through the plate edge)")
     if o.bore_r >= rj:
-        raise GeometryError("output.bore_breaks_journal", "bore breaks through the journal")
+        geometry_issue("output.bore_breaks_journal", "bore breaks through the journal")
     check_cap(o.cap, o.output_bearing, race="inner", name="output_cap")
     if cap_radii(o.cap, o.output_bearing, "inner")[0] < o.bore_r:
         print("warning: output cap inner radius is smaller than the bore")
@@ -60,7 +60,7 @@ def make_output(o: output, tol: tolerancing = NOMINAL) -> Part:
         with BuildSketch():
             if o.bore_r > 0:
                 Circle(o.bore_r)
-            with PolarLocations(o.cap.bearing_retainer_holes.R, o.cap.bearing_retainer_holes.N):
+            with PolarLocations(o.cap.bearing_retainer_holes.R, o.cap.bearing_retainer_holes.N, start_angle=o.cap.bearing_retainer_holes.start_angle):
                 Circle(o.cap.bearing_retainer_holes.r + tol.delta("output.retainer_holes"))
         extrude(amount=H, mode=Mode.SUBTRACT)
     return part.part

@@ -3,10 +3,11 @@ import math
 import os
 from build123d import Compound, Location, Part, export_step, export_stl
 from part_generation_fcns.classdefs import *
-from part_generation_fcns.errors import GeometryError
+from part_generation_fcns.errors import collecting_issues, geometry_issue
 from part_generation_fcns.base_step import make_base
 from part_generation_fcns.top_step import make_top, _radii as top_radii
-from part_generation_fcns.cycloid_step import make_cycloid, cycloid_thickness
+from part_generation_fcns.cycloid_step import (cap_reaches_output_holes, cycloid_thickness, make_cycloid,
+                                                output_holes)
 from part_generation_fcns.eccentric_insert_step import make_eccentric_insert
 from part_generation_fcns.output_step import make_output, output_height, output_plate_r
 from part_generation_fcns.cap_step import cap_radii, make_cap
@@ -14,10 +15,11 @@ from part_generation_fcns.hardware import bolt_name, make_bearing, make_bolt, ma
 from part_generation_fcns.tolerancing import NOMINAL, tolerancing
 
 
-def _polar(R: float, N: int):
-    """(x, y, angle_deg) of N points on radius R, first on +X (matches PolarLocations)."""
+def _polar(R: float, N: int, start: float = 0.0):
+    """(x, y, angle_deg) of N points on radius R, first at `start` degrees from +X (matches
+    PolarLocations)."""
     return [(R * math.cos(math.radians(a)), R * math.sin(math.radians(a)), a)
-            for a in (360 * k / N for k in range(N))]
+            for a in (start + 360 * k / N for k in range(N))]
 
 
 class gearbox:
@@ -69,6 +71,7 @@ class gearbox:
         output_cap: cap, # inner-race cap; r is its inner radius
         # export
         assembly_path: str | None = "steps/gearbox/gearbox.step",
+        strict: bool = True, # False: record geometry problems in .issues and build what it can
     ):
         self.base_cycloid_spacing = base_cycloid_spacing
         self.cap_output_spacing = cap_output_spacing
@@ -133,8 +136,16 @@ class gearbox:
             bore_r=output_bore_r,
             cap=output_cap,
         )
-        self._check_assembly()
-        self._layout_cache = self._layout()
+        self.strict = strict
+        self.issues: list[tuple[str, str]] = []
+        if strict:
+            self._check_assembly()
+            self._layout_cache = self._layout()
+        else:
+            with collecting_issues() as found:
+                self._check_assembly()
+                self._layout_cache = self._layout()
+            self.issues = found
         self.parts = self.build()
         if assembly_path is not None:
             self.export_assembly(assembly_path)
@@ -144,20 +155,20 @@ class gearbox:
         base_hole_r = self.base.drive_motor.shaft_r + self.base.shaft_hole_offset
         cycloid_lip_r = self.cycloid.input_bearing.OD / 2 - self.cycloid.cap.flange.offset
         if insert_r + self.eccentric_insert.e >= base_hole_r:
-            raise GeometryError("assembly.insert_hits_base_hole", "eccentric insert flange hits the base center hole as it orbits")
+            geometry_issue("assembly.insert_hits_base_hole", "eccentric insert flange hits the base center hole as it orbits")
         if insert_r >= cycloid_lip_r:
-            raise GeometryError("assembly.insert_hits_cycloid_lip", "eccentric insert flange hits the cycloid's bearing support lip")
+            geometry_issue("assembly.insert_hits_cycloid_lip", "eccentric insert flange hits the cycloid's bearing support lip")
 
         shoulder_r = self.output.output_bearing.ID / 2 + self.output.flange.offset
         top_lip_r = self.top.output_bearing.OD / 2 - self.top.cap.flange.offset
         if shoulder_r >= top_lip_r:
-            raise GeometryError("assembly.shoulder_hits_top_lip", "output shoulder hits the top's bearing support lip")
+            geometry_issue("assembly.shoulder_hits_top_lip", "output shoulder hits the top's bearing support lip")
         if output_plate_r(self.output) >= self.cycloid.roller_R - self.cycloid.roller_bearing.OD / 2:
-            raise GeometryError("assembly.plate_hits_rollers", "output plate hits the ring rollers")
+            geometry_issue("assembly.plate_hits_rollers", "output plate hits the ring rollers")
         # output cap and top cap sit in the same plane (journal top = tower top)
         if cap_radii(self.output.cap, self.output.output_bearing, "inner")[1] >= \
            cap_radii(self.top.cap, self.top.output_bearing, "outer")[0]:
-            raise GeometryError("assembly.output_cap_hits_top_cap", "output cap hits the top cap")
+            geometry_issue("assembly.output_cap_hits_top_cap", "output cap hits the top cap")
 
     def stack(self) -> dict[str, float]:
         """Z of the underside of each plate-like part. z=0 is the underside of the base."""
@@ -181,21 +192,27 @@ class gearbox:
         L = {}
 
         # custom parts
-        L["base"] = (make_base(self.base, tol), [Location((0, 0, z["base"]))])
+        L["base"] = (self._try(lambda: make_base(self.base, tol), "base"), [Location((0, 0, z["base"]))])
         # insert's shaft hole is at local +e; turn it 180 deg so the hole lands on the motor axis
-        L["eccentric_insert"] = (make_eccentric_insert(self.eccentric_insert, tol),
+        L["eccentric_insert"] = (self._try(lambda: make_eccentric_insert(self.eccentric_insert, tol), "eccentric_insert"),
                                  [Location((e, 0, z["eccentric_insert"]), (0, 0, 180))])
-        L["cycloid"] = (make_cycloid(c, tol), [Location((e, 0, z["cycloid"]))])
-        L["cycloid_cap"] = (make_cap(c.cap, c.input_bearing, hole_delta=tol.delta("cycloid_cap.holes")), [Location((e, 0, z["cycloid_cap"]))])
-        L["output"] = (make_output(o, tol), [Location((0, 0, z["output"]))])
-        L["output_cap"] = (make_cap(o.cap, o.output_bearing, race="inner", hole_delta=tol.delta("output_cap.holes")), [Location((0, 0, z["output_cap"]))])
-        L["top"] = (make_top(tp, tol), [Location((0, 0, z["top"]))])
-        L["top_cap"] = (make_cap(tp.cap, tp.output_bearing, hole_delta=tol.delta("top_cap.holes")), [Location((0, 0, z["top_cap"]))])
+        L["cycloid"] = (self._try(lambda: make_cycloid(c, tol), "cycloid"), [Location((e, 0, z["cycloid"]))])
+        # a cycloid cap that reaches over the output holes gets the same holes
+        cap_cut = None
+        if cap_reaches_output_holes(c):
+            oh = output_holes(c)
+            cap_cut = patterned_hole(r=oh.r + tol.clearance, R=oh.R, N=oh.N, start_angle=oh.start_angle)
+        L["cycloid_cap"] = (self._try(lambda: make_cap(c.cap, c.input_bearing, hole_delta=tol.delta("cycloid_cap.holes"),
+                                     cutouts=cap_cut), "cycloid_cap"), [Location((e, 0, z["cycloid_cap"]))])
+        L["output"] = (self._try(lambda: make_output(o, tol), "output"), [Location((0, 0, z["output"]))])
+        L["output_cap"] = (self._try(lambda: make_cap(o.cap, o.output_bearing, race="inner", hole_delta=tol.delta("output_cap.holes")), "output_cap"), [Location((0, 0, z["output_cap"]))])
+        L["top"] = (self._try(lambda: make_top(tp, tol), "top"), [Location((0, 0, z["top"]))])
+        L["top_cap"] = (self._try(lambda: make_cap(tp.cap, tp.output_bearing, hole_delta=tol.delta("top_cap.holes")), "top_cap"), [Location((0, 0, z["top_cap"]))])
 
         # main bearings, seated on their support lips
-        L["input_bearing"] = (make_bearing(c.input_bearing),
+        L["input_bearing"] = (self._try(lambda: make_bearing(c.input_bearing), "input_bearing"),
                               [Location((e, 0, z["cycloid"] + c.cap.flange.thickness))])
-        L["output_bearing"] = (make_bearing(tp.output_bearing),
+        L["output_bearing"] = (self._try(lambda: make_bearing(tp.output_bearing), "output_bearing"),
                                [Location((0, 0, z["top"] + tp.cap.flange.thickness))])
 
         # ring rollers: midplane on the cycloid midplane, spacers down to the base and up to
@@ -204,16 +221,16 @@ class gearbox:
         z_rb0 = z["cycloid_mid"] - rb.th / 2
         z_rb1 = z_rb0 + rb.th
         ring = [(x, y) for x, y, _ in _polar(c.roller_R, c.ratio + 1)]
-        L["roller_bearing"] = (make_bearing(rb), [Location((x, y, z_rb0)) for x, y in ring])
-        L["roller_spacer_bottom"] = (make_spacer(rb, z_rb0 - self.base.t, tol.delta("roller_spacer.bore")),
+        L["roller_bearing"] = (self._try(lambda: make_bearing(rb), "roller_bearing"), [Location((x, y, z_rb0)) for x, y in ring])
+        L["roller_spacer_bottom"] = (self._try(lambda: make_spacer(rb, z_rb0 - self.base.t, tol.delta("roller_spacer.bore")), "roller_spacer_bottom"),
                                      [Location((x, y, self.base.t)) for x, y in ring])
-        L["roller_spacer_top"] = (make_spacer(rb, z["top"] - z_rb1, tol.delta("roller_spacer.bore")),
+        L["roller_spacer_top"] = (self._try(lambda: make_spacer(rb, z["top"] - z_rb1, tol.delta("roller_spacer.bore")), "roller_spacer_top"),
                                   [Location((x, y, z_rb1)) for x, y in ring])
         # head on the top's base plate; passes through the top, spacers and bearing and
         # threads into the base
         z_ring_head = z["top"] + tp.base_thickness
         ring_bolt = socket_head_bolt(rb.ID, z_ring_head - z["base"])
-        L[f"ring_bolt_{bolt_name(ring_bolt)}"] = (make_bolt(ring_bolt),
+        L[f"ring_bolt_{bolt_name(ring_bolt)}"] = (self._try(lambda: make_bolt(ring_bolt), f"ring_bolt_{bolt_name(ring_bolt)}"),
                                                   [Location((x, y, z_ring_head)) for x, y in ring])
 
         # output needles: roller midplane on the cycloid midplane, spacer up to the output
@@ -222,11 +239,11 @@ class gearbox:
         z_nr0 = z["cycloid_mid"] - nr.th / 2
         z_nr1 = z_nr0 + nr.th
         pins = [(x, y) for x, y, _ in _polar(o.output_holes_R, o.output_holes_N)]
-        L["needle_roller"] = (make_bearing(nr), [Location((x, y, z_nr0)) for x, y in pins])
-        L["needle_spacer"] = (make_spacer(nr, z["output"] - z_nr1, tol.delta("needle_spacer.bore")), [Location((x, y, z_nr1)) for x, y in pins])
+        L["needle_roller"] = (self._try(lambda: make_bearing(nr), "needle_roller"), [Location((x, y, z_nr0)) for x, y in pins])
+        L["needle_spacer"] = (self._try(lambda: make_spacer(nr, z["output"] - z_nr1, tol.delta("needle_spacer.bore")), "needle_spacer"), [Location((x, y, z_nr1)) for x, y in pins])
         needle_bolt = socket_head_bolt(nr.ID, z["output"] + o.plate_t - z_nr0)
         # flipped: head below the roller, shank pointing up
-        L[f"needle_bolt_{bolt_name(needle_bolt)}"] = (make_bolt(needle_bolt),
+        L[f"needle_bolt_{bolt_name(needle_bolt)}"] = (self._try(lambda: make_bolt(needle_bolt), f"needle_bolt_{bolt_name(needle_bolt)}"),
                                                       [Location((x, y, z_nr0), (180, 0, 0)) for x, y in pins])
 
         # cap screws: head on the cap, engaging the part below by the bearing thickness
@@ -236,12 +253,23 @@ class gearbox:
             rh = cp.bearing_retainer_holes
             bt = socket_head_bolt(2 * rh.r, cp.flange.thickness + b.th)
             z_head = z[name] + cp.flange.thickness
-            L[f"{name}_bolt_{bolt_name(bt)}"] = (make_bolt(bt),
-                [Location((cx + x, y, z_head)) for x, y, _ in _polar(rh.R, rh.N)])
+            L[f"{name}_bolt_{bolt_name(bt)}"] = (self._try(lambda: make_bolt(bt), f"{name}_bolt_{bolt_name(bt)}"),
+                [Location((cx + x, y, z_head)) for x, y, _ in _polar(rh.R, rh.N, rh.start_angle)])
 
+        L = {name: v for name, v in L.items() if v[0] is not None}   # lenient: skip unbuildable parts
         for name, (part, _) in L.items():
             part.label = name
         return L
+
+    def _try(self, build, name: str):
+        """Build one part. Lenient gearboxes report a part whose CAD fails and carry on."""
+        try:
+            return build()
+        except Exception as ex:
+            if self.strict:
+                raise
+            geometry_issue(f"build.{name}", f"{name} could not be built: {ex}")
+            return None
 
     def build(self) -> dict[str, Part]:
         """Every unique part (nominal) at its own origin; returns {name: Part}."""

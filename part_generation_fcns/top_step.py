@@ -1,6 +1,6 @@
 from build123d import *
 from part_generation_fcns.classdefs import *
-from part_generation_fcns.errors import GeometryError
+from part_generation_fcns.errors import GeometryError, geometry_issue
 from part_generation_fcns.paths import ensure_parent
 from part_generation_fcns.tolerancing import NOMINAL, tolerancing
 from part_generation_fcns.cap_step import check_cap, make_cap
@@ -26,13 +26,13 @@ def _check_top(tp: top):
 
     check_cap(tp.cap, tp.output_bearing, name="top_cap")
     if rh.R + rh.r >= rw:
-        raise GeometryError("top.retainer_holes_outside_wall", "bearing retainer holes must sit within the tower wall")
+        geometry_issue("top.retainer_holes_outside_wall", "bearing retainer holes must sit within the tower wall")
     if tp.roller_holes_R - roller_hole_r <= rw:
-        raise GeometryError("top.roller_holes_hit_wall", "roller holes overlap the tower wall")
+        geometry_issue("top.roller_holes_hit_wall", "roller holes overlap the tower wall")
     if tp.edge_offset <= 0:
-        raise GeometryError("top.edge_offset", "top edge_offset must be > 0 (roller holes would break through the edge)")
+        geometry_issue("top.edge_offset", "top edge_offset must be > 0 (roller holes would break through the edge)")
     if tp.base_thickness >= H:
-        raise GeometryError("top.base_too_thick", "base_thickness must be less than the tower height")
+        geometry_issue("top.base_too_thick", "base_thickness must be less than the tower height")
 
 
 def make_top(tp: top, tol: tolerancing = NOMINAL) -> Part:
@@ -55,7 +55,7 @@ def make_top(tp: top, tol: tolerancing = NOMINAL) -> Part:
                 Circle(tp.roller_bearing.ID / 2 + tol.delta("top.roller_holes"))
         extrude(amount=tb, mode=Mode.SUBTRACT)
         with BuildSketch():
-            with PolarLocations(tp.cap.bearing_retainer_holes.R, tp.cap.bearing_retainer_holes.N):
+            with PolarLocations(tp.cap.bearing_retainer_holes.R, tp.cap.bearing_retainer_holes.N, start_angle=tp.cap.bearing_retainer_holes.start_angle):
                 Circle(tp.cap.bearing_retainer_holes.r + tol.delta("top.retainer_holes"))
         extrude(amount=H, mode=Mode.SUBTRACT)
     return part.part

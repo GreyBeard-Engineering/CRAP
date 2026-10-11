@@ -62,6 +62,20 @@ let framed = false;
 // nothing is clipped (changing the plane count would force shader recompiles).
 const sectionPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 1e6);
 const clip = [sectionPlane];
+// overlapping volumes of colliding parts, in the assembled (input angle 0) pose
+const collisionGroup = new THREE.Group();
+cad.add(collisionGroup);
+const collisionMaterial = new THREE.MeshBasicMaterial({ color: 0xff2a2a, transparent: true, opacity: 0.9,
+                                                        depthTest: false });
+const TINT = new THREE.Color(1.0, 0.35, 0.35), WHITE = new THREE.Color(1, 1, 1);
+
+// "roller_bearing_12" -> ["roller_bearing", 11]; single-instance labels are the part name
+function splitLabel(label, parts) {
+  if (parts[label]) return [label, 0];
+  const i = label.lastIndexOf("_");
+  return [label.slice(0, i), Number(label.slice(i + 1)) - 1];
+}
+
 const edgeMaterial = new THREE.LineBasicMaterial({ color: 0x111316, transparent: true, opacity: 0.55, clippingPlanes: clip });
 
 function decode(b64, Type) {
@@ -86,6 +100,14 @@ function clearModel() {
 function loadModel(payload) {
   clearModel();
   motion = payload.motion;
+  // which instances collide (simple builds report collisions)
+  const hits = {};
+  for (const [a, b] of payload.solver?.collisions ?? []) {
+    for (const label of [a, b]) {
+      const [name, idx] = splitLabel(label, payload.parts);
+      (hits[name] ??= new Set()).add(idx);
+    }
+  }
   for (const [name, part] of Object.entries(payload.parts)) {
     const geom = new THREE.BufferGeometry();
     geom.setAttribute("position", new THREE.BufferAttribute(decode(part.verts, Float32Array), 3));
@@ -109,6 +131,9 @@ function loadModel(payload) {
     for (const [m, shadows] of [[mat, true], [capMat, false]]) {
       const mesh = new THREE.InstancedMesh(geom, m, mats.length);
       mats.forEach((x, i) => mesh.setMatrixAt(i, x));
+      if (shadows && hits[name]) {             // tint the colliding instances
+        mats.forEach((_, i) => mesh.setColorAt(i, hits[name].has(i) ? TINT : WHITE));
+      }
       mesh.castShadow = mesh.receiveShadow = shadows;
       mesh.userData = { name, custom, stock: part.stock };
       groups[part.group].add(mesh);
@@ -121,6 +146,21 @@ function loadModel(payload) {
       edges.userData = { name, custom };
       groups[part.group].add(edges);
     }
+  }
+  // the overlapping volumes themselves, drawn on top so they can't hide inside the parts
+  for (const child of [...collisionGroup.children]) { collisionGroup.remove(child); child.geometry.dispose(); }
+  for (const c of payload.collision_meshes ?? []) {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.BufferAttribute(decode(c.verts, Float32Array), 3));
+    g.setIndex(new THREE.BufferAttribute(decode(c.tris, Uint32Array), 1));
+    const m = new THREE.Mesh(g, collisionMaterial);
+    m.renderOrder = 10;
+    collisionGroup.add(m);
+  }
+  if (collisionGroup.children.length) {     // collisions are found in the assembled pose: show it
+    theta = 0;
+    paused = true;
+    document.getElementById("pause").textContent = "Play";
   }
   renderPartsBar(payload);
   applyVisibility();
@@ -260,6 +300,7 @@ function updateMotion() {
     .multiply(m1.makeRotationZ(out))
     .multiply(m2.makeTranslation(-motion.cycloid_center[0], -motion.cycloid_center[1], 0));
   for (const g of Object.values(groups)) g.matrixWorldNeedsUpdate = true;
+  collisionGroup.visible = theta === 0;     // the overlaps are only right in the assembled pose
 
   const turns = theta / (2 * Math.PI);
   document.getElementById("readout").textContent =
@@ -460,6 +501,40 @@ let seq = 0;
 let applied = 0;
 let built = null;         // full parameters of the model on screen
 let lastSolver = null;    // solver report for the model on screen (simple builds)
+let lastValid = null;     // {payload, values, solver} of the last build with no problems
+let shownHasProblems = false;
+const revertBtn = document.getElementById("revert");
+
+function prettyPart(label, parts) {
+  const [name] = splitLabel(label, parts);
+  return name.replace(/_(M|D)\d[\d.]*x[\d.]+$/, "").replaceAll("_", " ");
+}
+
+// "cycloid × roller bearing (23)" style list of colliding part pairs
+function showProblems(body) {
+  const pairs = new Map();
+  for (const [a, b] of body.solver?.collisions ?? []) {
+    const key = [prettyPart(a, body.parts), prettyPart(b, body.parts)].sort().join(" × ");
+    pairs.set(key, (pairs.get(key) ?? 0) + 1);
+  }
+  errorEl.replaceChildren();
+  const head = document.createElement("div");
+  if (pairs.size) {
+    head.textContent = "Colliding parts (shown in red):";
+    const ul = document.createElement("ul");
+    ul.className = "collision-list";
+    for (const [k, n] of pairs) {
+      const li = document.createElement("li");
+      li.textContent = n > 1 ? `${k} (${n})` : k;
+      ul.append(li);
+    }
+    errorEl.append(head, ul);
+  } else {
+    head.textContent = "No collisions, but the design breaks the layout rules (details in the server log).";
+    errorEl.append(head);
+  }
+  errorEl.hidden = false;
+}
 const rebuildBtn = document.getElementById("rebuild");
 
 // light up Rebuild whenever the form differs from what is displayed
@@ -469,7 +544,7 @@ function updateDirty() {
   const dirty = !kwargs || !built || inputsOf(kwargs) !== inputsOf(built);
   rebuildBtn.classList.toggle("dirty", dirty);
   rebuildBtn.title = dirty ? "parameters changed: rebuild the model (Enter)" : "model is up to date";
-  if (!dirty && !errorEl.hidden) {    // back to the displayed model: a failed build's error is stale
+  if (!dirty && !errorEl.hidden && !shownHasProblems) {   // back to the displayed model: a failed build's error is stale
     errorEl.hidden = true;
     setStatus("ready", "ok");
     if (lastSolver) showSolverReport(lastSolver);
@@ -514,7 +589,16 @@ async function rebuild() {
     lastSolver = body.solver ?? null;
     built = readForm();
     const n = Object.values(body.instances).reduce((a, l) => a + l.length, 0);
-    setStatus(`ready · ${((performance.now() - t0) / 1000).toFixed(1)} s · ${n} parts`, "ok");
+    const secs = ((performance.now() - t0) / 1000).toFixed(1);
+    shownHasProblems = (body.issues?.length ?? 0) > 0 || body.solver?.ok === false;
+    if (shownHasProblems) {
+      showProblems(body);
+      setStatus(`built with problems · ${secs} s`, "bad");
+    } else {
+      lastValid = { payload: body, values: built, solver: lastSolver };
+      setStatus(`ready · ${secs} s · ${n} parts`, "ok");
+    }
+    revertBtn.hidden = !(shownHasProblems && lastValid);
   } catch (err) {
     if (mySeq === seq) setStatus(`server unreachable: ${err.message}`, "bad");
   } finally {
@@ -528,6 +612,12 @@ function showSolverReport(solver, failLog) {
   const el = document.getElementById("solver-report");
   if (!solver) {
     el.textContent = failLog?.length ? `solver tried:\n- ${failLog.join("\n- ")}` : "";
+    el.className = "bad";
+    return;
+  }
+  if (solver.ok === false) {
+    el.textContent = `no valid design found · collision check (${solver.check_seconds} s): ` +
+                     `${solver.collisions.length} colliding pairs`;
     el.className = "bad";
     return;
   }
@@ -548,6 +638,20 @@ form.addEventListener("keydown", (ev) => {   // Enter in any field rebuilds
 });
 form.addEventListener("submit", (ev) => ev.preventDefault());
 rebuildBtn.addEventListener("click", rebuild);
+revertBtn.addEventListener("click", () => {
+  if (!lastValid) return;
+  loadModel(lastValid.payload);
+  setFormValues(lastValid.values);
+  built = lastValid.values;
+  lastSolver = lastValid.solver;
+  if (lastSolver) showSolverReport(lastSolver);
+  shownHasProblems = false;
+  errorEl.hidden = true;
+  revertBtn.hidden = true;
+  setStatus("reverted to the last valid design", "ok");
+  syncMotorFit();
+  updateDirty();
+});
 document.getElementById("pause").addEventListener("click", (ev) => {
   paused = !paused;
   ev.target.textContent = paused ? "Play" : "Pause";

@@ -60,6 +60,8 @@ class SolveResult:
     iterations: int = 0
     collisions: list = field(default_factory=list)
     check_seconds: float = 0.0
+    ok: bool = True                      # False: best-effort design with unresolved problems
+    problems: list[str] = field(default_factory=list)
 
 
 def _screw(b: bearing, rules: design_rules, step: int = 0) -> float:
@@ -70,6 +72,11 @@ def _screw(b: bearing, rules: design_rules, step: int = 0) -> float:
     if idx < 0:
         raise SolveError(f"no screw small enough for the {b.ID:g}x{b.OD:g} bearing's cap")
     return SCREW_SIZES[idx]
+
+
+def _up(x: float, step: float = 0.1) -> str:
+    """x rounded *up* to step, for "at least" suggestions that must actually work."""
+    return f"{math.ceil(x / step - 1e-9) * step:.1f}"
 
 
 def _head(d: float) -> tuple[float, float]:
@@ -91,9 +98,26 @@ def _pattern_n(R: float, pitch: float, lo: int, hi: int) -> int:
     return max(lo, min(hi, int(2 * math.pi * R / pitch)))
 
 
-def derive(spec: simple_spec, rules: design_rules = RULES, adj: dict | None = None) -> dict:
-    """gearbox() kwargs from a simple spec. adj holds the solver's accumulated corrections."""
-    adj = adj or defaultdict(float)
+def derive(spec: simple_spec, rules: design_rules = RULES, adj: dict | None = None,
+           problems: list[str] | None = None) -> dict:
+    """gearbox() kwargs from a simple spec. adj holds the solver's accumulated corrections.
+    With a problems list, unsatisfiable rules are recorded there and a best-effort value is
+    used instead of raising, so the design can still be built and inspected."""
+    adj = adj if adj is not None else defaultdict(float)
+
+    def problem(msg: str):
+        if problems is None:
+            raise SolveError(msg)
+        if msg not in problems:
+            problems.append(msg)
+
+    def screw(b: bearing, key: str) -> float:
+        try:
+            return _screw(b, rules, int(adj[key]))
+        except SolveError as ex:
+            problem(str(ex))
+            return SCREW_SIZES[0]
+
     r3 = lambda x: round(x, 3)
     mw, cl, te = rules.min_wall, rules.clearance, rules.thread_engage
     rb, ib, nr, ob, m = (spec.roller_bearing, spec.input_bearing, spec.output_needle_roller,
@@ -103,12 +127,12 @@ def derive(spec: simple_spec, rules: design_rules = RULES, adj: dict | None = No
     # the eccentric insert carries the motor shaft offset by e inside the input bearing's ID
     need_id = 2 * (m.shaft_r + e + rules.insert_wall)
     if ib.ID < need_id:
-        raise SolveError(f"the input bearing's ID ({ib.ID:g} mm) is too small for the motor shaft "
+        problem(f"the input bearing's ID ({ib.ID:g} mm) is too small for the motor shaft "
                          f"(Ø{2 * m.shaft_r:g}) offset by e={e:g} with a {rules.insert_wall:g} mm insert wall: "
-                         f"needs ID >= {need_id:.1f} mm")
+                         f"needs ID >= {_up(need_id)} mm")
 
     # cycloid cap: screws just outside the input bearing seat
-    d_c = _screw(ib, rules, int(adj["cycloid_cap_screw"]))
+    d_c = screw(ib, "cycloid_cap_screw")
     R_c = ib.OD / 2 + mw + d_c / 2
     cyc_cap = cap(flange=_flange(ib, rules),
                   bearing_retainer_holes=patterned_hole(r=d_c / 2, R=r3(R_c),
@@ -117,7 +141,7 @@ def derive(spec: simple_spec, rules: design_rules = RULES, adj: dict | None = No
     cyc_cap_outer = R_c + d_c / 2 + mw
 
     # top cap: screws in the tower wall just outside the output bearing seat
-    d_t = _screw(ob, rules, int(adj["top_cap_screw"]))
+    d_t = screw(ob, "top_cap_screw")
     R_t = ob.OD / 2 + mw + d_t / 2
     top_cap = cap(flange=_flange(ob, rules),
                   bearing_retainer_holes=patterned_hole(r=d_t / 2, R=r3(R_t),
@@ -125,11 +149,13 @@ def derive(spec: simple_spec, rules: design_rules = RULES, adj: dict | None = No
                   edge_offset=mw)
 
     # output cap: clamps the output bearing inner race, screws in the journal
-    d_o = _screw(ob, rules, int(adj["output_cap_screw"]))
+    d_o = screw(ob, "output_cap_screw")
     R_o = ob.ID / 2 - mw - d_o / 2
     bore = R_o - d_o / 2 - mw
     if bore < 0:
-        raise GeometryError("output_cap.no_bore", "output cap screws don't fit in the output journal")
+        if problems is None:
+            raise GeometryError("output_cap.no_bore", "output cap screws don't fit in the output journal")
+        problem("output cap screws don't fit in the output journal")
     out_cap = cap(flange=_flange(ob, rules),
                   bearing_retainer_holes=patterned_hole(r=d_o / 2, R=r3(R_o),
                                                         N=_pattern_n(R_o, 4 * _head(d_o)[0], 3, 8)),
@@ -141,22 +167,43 @@ def derive(spec: simple_spec, rules: design_rules = RULES, adj: dict | None = No
     root = spec.roller_R - rb.OD / 2 - e      # smallest cycloid radius
     plate_r = spec.roller_R - rb.OD / 2 - cl  # output plate edge, clear of the rollers
     shoulder = ob.ID / 2 + _lip(ob, rules)
-    # the cap sits on the cycloid face, so its edge may come right up to the holes (its own
-    # edge_offset already walls in its screws); the output shoulder needs a wall to the pin holes
-    lo = max(cyc_cap_outer + r_oh, shoulder + mw + pin_r)
     hi = min(root - mw - r_oh, plate_r - mw - pin_r)
-    if lo > hi:
-        cap_limits = cyc_cap_outer + r_oh >= shoulder + mw + pin_r
-        if cap_limits and d_c > SCREW_SIZES[0]:     # a smaller cycloid cap screw shrinks the cap
-            raise GeometryError("derive.output_holes_dont_fit",
-                                f"output holes need {lo - hi:.2f} mm more room inside the cycloid")
-        # the room grows 1:1 with roller R (the root and the plate edge both move out)
-        raise SolveError(f"the output holes (Ø{2 * r_oh:g} for a Ø{nr.OD:g} needle roller orbiting by e) "
-                         f"need {lo - hi:.1f} mm more radial room: increase roller R to at least "
-                         f"{spec.roller_R + lo - hi:.1f} mm, or use a smaller e, needle roller or "
-                         f"{'input' if cap_limits else 'output'} bearing")
-    R_oh = (lo + hi) / 2
-    N_oh = _pattern_n(R_oh, 4 * r_oh, 3, 8)   # web between holes >= one hole diameter
+    # standard layout: the cap sits on the cycloid face inside the hole ring, so its edge may
+    # come right up to the holes; the output shoulder needs a wall to the pin holes
+    lo = max(cyc_cap_outer + r_oh, shoulder + mw + pin_r)
+    if lo <= hi + 1e-6:              # (tolerance: float noise is not a real shortfall)
+        R_oh = (lo + hi) / 2
+        N_oh = _pattern_n(R_oh, 4 * r_oh, 3, 8)   # web between holes >= one hole diameter
+    else:
+        # compact layout: holes only need to clear the bearing seat; the cap reaches over them
+        # (it gets the same holes) and its screws sit half a pitch between them
+        lo_c = max(ib.OD / 2 + mw + r_oh, shoulder + mw + pin_r)
+        if lo_c > hi + 1e-6:
+            problem(f"the output holes (Ø{2 * r_oh:g} for a Ø{nr.OD:g} needle roller orbiting by e) "
+                             f"need {_up(lo_c - hi)} mm more radial room: increase roller R to at least "
+                             f"{_up(spec.roller_R + lo_c - hi)} mm, or use a smaller e, needle roller, "
+                             f"input or output bearing")
+        R_oh = hi if lo_c <= hi + 1e-6 else (lo_c + hi) / 2  # as far out as allowed: most room between
+        head_r = _head(d_c)[0] / 2
+        need = r_oh + max(d_c / 2 + mw, head_r + cl / 2)   # screw centre to hole centre
+        N_oh = None
+        for n in range(_pattern_n(R_oh, 4 * r_oh, 3, 8), 2, -1):
+            if math.hypot(R_oh - R_c * math.cos(math.pi / n), R_c * math.sin(math.pi / n)) >= need:
+                N_oh = n
+                break
+        if N_oh is None:
+            if d_c > SCREW_SIZES[0] and problems is None:
+                raise GeometryError("derive.output_holes_dont_fit",
+                                    "cycloid cap screws don't fit between the output holes")
+            N_oh = 3
+            problem("the cycloid cap screws don't fit between the output holes even at M2 with 3 "
+                             f"holes: increase roller R or use a smaller input bearing or needle roller")
+        cap_outer = min(R_oh + r_oh + mw, root - cl)
+        cyc_cap = cap(flange=cyc_cap.flange,
+                      bearing_retainer_holes=patterned_hole(r=d_c / 2, R=r3(R_c), N=N_oh,
+                                                            start_angle=r3(180 / N_oh)),
+                      edge_offset=r3(cap_outer - R_c - d_c / 2))
+        adj["_compact_layout"] = 1.0
 
     # stack gaps, driven by the screw heads that sit in them
     needle_d = nr.ID
@@ -269,10 +316,34 @@ def _collision_fix(a: str, b: str):
 
 
 def solve(spec: simple_spec, rules: design_rules = RULES, max_iter: int = 12,
-          check_collisions: bool = True, progress=None) -> SolveResult:
+          check_collisions: bool = True, progress=None, best_effort: bool = False) -> SolveResult:
     """Derive, build and check until it builds with no collisions. progress(stage) is called
-    with "solving" / "checking collisions" for UI feedback."""
+    with "solving" / "checking collisions" for UI feedback.
+
+    If no adjustment works this raises SolveError, unless best_effort: then the best-effort
+    design is built anyway (geometry checks recorded, not enforced) and returned with
+    ok=False, its problems and its collisions, so it can be inspected."""
     adj = defaultdict(float)
+    try:
+        return _solve(spec, rules, max_iter, check_collisions, progress, adj)
+    except SolveError as ex:
+        if not best_effort:
+            raise
+        problems = [str(ex)]
+        kwargs = derive(spec, rules, adj, problems)
+        gb = gearbox(**kwargs, assembly_path=None, strict=False)
+        problems += [m for _, m in gb.issues if m not in problems]
+        hits, dt = [], 0.0
+        if check_collisions:
+            if progress:
+                progress("checking collisions")
+            t0 = time.time()
+            hits = gb.collisions()
+            dt = time.time() - t0
+        return SolveResult(kwargs, gb, ex.log, 0, hits, dt, ok=False, problems=problems)
+
+
+def _solve(spec, rules, max_iter, check_collisions, progress, adj) -> SolveResult:
     log: list[str] = []
     last: GeometryError | None = None     # the check we were fixing, for a useful failure message
     for it in range(1, max_iter + 1):
@@ -297,6 +368,8 @@ def solve(spec: simple_spec, rules: design_rules = RULES, max_iter: int = 12,
                 raise SolveError(str(ex), log) from None
             continue
 
+        if adj.get("_compact_layout") and not any("compact layout" in l for l in log):
+            log.append("compact layout: cycloid cap screws between the output holes (cap carries the holes)")
         if not check_collisions:
             return SolveResult(kwargs, gb, log, it)
         if progress:

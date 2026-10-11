@@ -1,6 +1,6 @@
 from build123d import *
 from part_generation_fcns.classdefs import *
-from part_generation_fcns.errors import GeometryError
+from part_generation_fcns.errors import GeometryError, geometry_issue
 
 
 def cap_radii(cp: cap, b: bearing, race: str = "outer") -> tuple[float, float]:
@@ -25,23 +25,25 @@ def check_cap(cp: cap, b: bearing, race: str = "outer", name: str = "cap"):
         if ri <= b.ID / 2:
             print("warning: support flange / cap reaches the bearing inner race")
         if rh.R - rh.r <= b.OD / 2:
-            raise GeometryError(f"{name}.holes_overlap_seat", "bearing retainer holes overlap the bearing seat")
+            geometry_issue(f"{name}.holes_overlap_seat", "bearing retainer holes overlap the bearing seat")
         if cp.edge_offset <= 0:
-            raise GeometryError(f"{name}.edge_offset", "cap edge_offset must be > 0 (screw holes would break through the edge)")
+            geometry_issue(f"{name}.edge_offset", "cap edge_offset must be > 0 (screw holes would break through the edge)")
     else:
         if ro >= b.OD / 2:
             print("warning: support flange / cap reaches the bearing outer race")
         if rh.R + rh.r >= b.ID / 2:
-            raise GeometryError(f"{name}.holes_break_journal", "bearing retainer holes break through the journal")
+            geometry_issue(f"{name}.holes_break_journal", "bearing retainer holes break through the journal")
         if cp.edge_offset <= 0:
-            raise GeometryError(f"{name}.edge_offset", "cap edge_offset must be > 0 (screw holes would break into the bore)")
+            geometry_issue(f"{name}.edge_offset", "cap edge_offset must be > 0 (screw holes would break into the bore)")
         if ri < 0:
-            raise GeometryError(f"{name}.no_bore", "inner-race cap edge_offset leaves no bore (holes - edge_offset < 0)")
+            geometry_issue(f"{name}.no_bore", "inner-race cap edge_offset leaves no bore (holes - edge_offset < 0)")
 
 
-def make_cap(cp: cap, b: bearing, race: str = "outer", hole_delta: float = 0.0) -> Part:
+def make_cap(cp: cap, b: bearing, race: str = "outer", hole_delta: float = 0.0,
+             cutouts: patterned_hole | None = None) -> Part:
     """Ring clamping a bearing race against its support flange. hole_delta grows (or, if
-    negative, shrinks) the screw holes."""
+    negative, shrinks) the screw holes; cutouts are extra holes through the cap (e.g. the
+    cycloid's output holes when the cap reaches over them)."""
     ri, ro = cap_radii(cp, b, race)
 
     with BuildPart() as part:
@@ -49,7 +51,10 @@ def make_cap(cp: cap, b: bearing, race: str = "outer", hole_delta: float = 0.0) 
             Circle(ro)
             if ri > 0:
                 Circle(ri, mode=Mode.SUBTRACT)
-            with PolarLocations(cp.bearing_retainer_holes.R, cp.bearing_retainer_holes.N):
+            with PolarLocations(cp.bearing_retainer_holes.R, cp.bearing_retainer_holes.N, start_angle=cp.bearing_retainer_holes.start_angle):
                 Circle(cp.bearing_retainer_holes.r + hole_delta, mode=Mode.SUBTRACT)
+            if cutouts is not None:
+                with PolarLocations(cutouts.R, cutouts.N, start_angle=cutouts.start_angle):
+                    Circle(cutouts.r, mode=Mode.SUBTRACT)
         extrude(amount=cp.flange.thickness)
     return part.part
