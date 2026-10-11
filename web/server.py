@@ -68,7 +68,7 @@ LABELS = {"ratio": "gearbox ratio", "e": "eccentricity e",
           "housing_edge_offset": "edge offset (beyond roller holes)",
           "output_plate_edge_offset": "plate edge offset (beyond needle screw holes)",
           "mounting_holes.R": "R (beyond base edge)",
-          "cycloid_cap.edge_offset": "edge offset (unused: set by the output holes)",
+          "cycloid_cap.edge_offset": "edge offset (unused: set by its screw holes)",
           "top_cap.edge_offset": "edge offset (beyond screw holes)",
           "output_cap.edge_offset": "bore offset (inside screw holes)",
           "drive_motor.face_mount": "face mount (screws into the motor face)"}
@@ -115,7 +115,8 @@ def _build(body: dict, kwargs: dict) -> dict:
             gb = gearbox(**kwargs, assembly_path=None, strict=False)
             for code, msg in gb.issues:
                 print(f"[build] issue {code}: {msg}", flush=True)
-            return {**gearbox_payload(gb), "issues": [m for _, m in gb.issues], "collision_meshes": []}
+            return {**gearbox_payload(gb), "issues": [m for _, m in gb.issues], "collision_meshes": [],
+                    "valid": not _failed_parts(gb), "failed_parts": _failed_parts(gb)}
         if not res.ok:      # the GUI only lists colliding parts; the details go to the log
             for msg in res.problems:
                 print(f"[solver] problem: {msg}", flush=True)
@@ -126,7 +127,9 @@ def _build(body: dict, kwargs: dict) -> dict:
                 "derived": {k: _to_json(v) for k, v in kwargs.items()},
                 "solver": _solver_report(res),
                 "issues": res.problems,
-                "collision_meshes": collision_meshes(res.gearbox, res.collisions)}
+                "collision_meshes": collision_meshes(res.gearbox, res.collisions),
+                "valid": not res.collisions and not _failed_parts(res.gearbox),
+                "failed_parts": _failed_parts(res.gearbox)}
 
 
 @app.get("/api/progress")
@@ -179,6 +182,11 @@ def _resolve(body: dict, kwargs: dict):
     return kwargs, None
 
 
+def _failed_parts(gb) -> list[str]:
+    """Parts whose CAD couldn't be generated at all."""
+    return [msg for code, msg in gb.issues if code.startswith("build.")]
+
+
 def _solver_report(res) -> dict:
     return {"ok": res.ok, "problems": res.problems, "iterations": res.iterations, "log": res.log,
             "check_seconds": round(res.check_seconds, 1),
@@ -188,10 +196,12 @@ def _solver_report(res) -> dict:
 def _export_zip(body: dict, kwargs: dict, tol: tolerancing, fmt: str, scope: str) -> bytes:
     with _build_lock:
         kwargs, res = _resolve(body, kwargs)
-        if res is not None and not res.ok:
-            raise ValueError("this design has unresolved problems; fix them (or revert to the last "
-                             "valid design) before exporting")
-        gb = gearbox(**kwargs, assembly_path=None)      # strict: refuses designs with problems
+        if res is not None and res.collisions:
+            raise ValueError("parts in this design collide; fix them (or revert to the last valid "
+                             "design) before exporting")
+        gb = gearbox(**kwargs, assembly_path=None, strict=False)
+        if _failed_parts(gb):
+            raise ValueError("; ".join(_failed_parts(gb)))
         with tempfile.TemporaryDirectory() as d:
             paths = gb.export(d, tol, fmt, scope)
             buf = io.BytesIO()

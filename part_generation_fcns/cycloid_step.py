@@ -35,20 +35,22 @@ def output_holes(c: cycloid) -> patterned_hole:
 
 
 def cycloid_cap(c: cycloid) -> cap:
-    """The cycloid cap as built. Its outline is fixed by the output holes: outer radius = the
-    hole circle + 1/4 of the hole radius, so every hole notches the edge (corners filleted by
-    the same 1/4 hole radius). The cap's edge_offset is replaced to match."""
-    oh, rh = output_holes(c), c.cap.bearing_retainer_holes
-    return dataclasses.replace(c.cap, edge_offset=oh.R + oh.r / 4 - rh.R - rh.r)
+    """The cycloid cap as built. Its outline is fixed by its own screw holes: outer radius =
+    the screw circle + 1/4 of the screw hole radius, so every screw hole notches the edge
+    (corners filleted by the same 1/4 hole radius). The cap's edge_offset is replaced to match."""
+    rh = c.cap.bearing_retainer_holes
+    return dataclasses.replace(c.cap, edge_offset=rh.r / 4 - rh.r)
 
 
 def cycloid_cap_fillet(c: cycloid) -> float:
-    return output_holes(c).r / 4
+    return c.cap.bearing_retainer_holes.r / 4
 
 
 def make_cycloid_cap(c: cycloid, tol: tolerancing = NOMINAL) -> Part:
     oh = output_holes(c)
-    cut = patterned_hole(r=oh.r + tol.clearance, R=oh.R, N=oh.N, start_angle=oh.start_angle)
+    cut = None
+    if cap_radii(cycloid_cap(c), c.input_bearing)[1] > oh.R - oh.r:   # it reaches the output holes
+        cut = patterned_hole(r=oh.r + tol.clearance, R=oh.R, N=oh.N, start_angle=oh.start_angle)
     return make_cap(cycloid_cap(c), c.input_bearing, hole_delta=tol.delta("cycloid_cap.holes"),
                     cutouts=cut, edge_fillet=cycloid_cap_fillet(c))
 
@@ -74,7 +76,7 @@ def make_cycloid(c: cycloid, tol: tolerancing = NOMINAL) -> Part:
     if profile_undercuts(c):
         geometry_issue("cycloid.undercut", "the roller is too large for this e / ratio / roller R: "
                             "the cycloid profile undercuts (reduce e or the roller OD, or increase roller R)")
-    check_cap(cycloid_cap(c), c.input_bearing, name="cycloid_cap")
+    check_cap(cycloid_cap(c), c.input_bearing, name="cycloid_cap", check_edge=False)
     oh = output_holes(c)
     # the cap carries the output holes; its screws must sit clear of them, and it must stay
     # inside the disc

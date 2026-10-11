@@ -71,9 +71,11 @@ def check_part(c: cycloid, path: str, cap_path: str, r_max: float):
     cbb = cap_part.bounding_box()
     assert cap_part.is_valid, "generated cap is not valid"
     assert abs(cbb.size.Z - c.cap.flange.thickness) < 1e-6, cbb.size
-    # the outline is set by the output holes (notched edge), so check the widest extent
+    # the outline is notched by its own screw holes, so check the farthest vertex instead of
+    # the bounding box
     outer = cap_radii(cycloid_cap(c), c.input_bearing)[1]
-    assert abs(max(cbb.size.X, cbb.size.Y) - 2 * outer) < 1e-2, (cbb.size, outer)
+    far = max((v.X ** 2 + v.Y ** 2) ** 0.5 for v in cap_part.vertices())
+    assert abs(far - outer) < 1e-3, (far, outer)
     print(f"cap ok: volume={cap_part.volume:.1f} mm^3, bbox={cbb.size}, wrote {cap_path}")
 
 

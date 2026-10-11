@@ -80,6 +80,17 @@
       </fieldset>
       <div class="row export-row"><button id="export-btn" type="button" class="primary">Download export (.zip)</button></div>
       <div id="export-status" class="hint"></div>
+
+      <details class="section" open>
+        <summary>Configuration</summary>
+        <p class="hint">Every parameter, the mode, the tolerances and the export choices, as JSON.</p>
+        <div class="row">
+          <button id="cfg-save" type="button">Save configuration (.json)</button>
+          <button id="cfg-load" type="button">Load configuration…</button>
+        </div>
+        <input id="cfg-file" type="file" accept=".json,application/json" hidden>
+        <div id="cfg-status" class="hint"></div>
+      </details>
     </div>
   </aside>
   <button id="menu" type="button" aria-label="toggle parameters">☰</button>

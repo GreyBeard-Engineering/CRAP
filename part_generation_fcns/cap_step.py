@@ -16,8 +16,9 @@ def cap_radii(cp: cap, b: bearing, race: str = "outer") -> tuple[float, float]:
     raise ValueError(f"race must be 'outer' or 'inner', got {race!r}")
 
 
-def check_cap(cp: cap, b: bearing, race: str = "outer", name: str = "cap"):
-    """Validate a cap against the bearing it retains; name prefixes the error codes."""
+def check_cap(cp: cap, b: bearing, race: str = "outer", name: str = "cap", check_edge: bool = True):
+    """Validate a cap against the bearing it retains; name prefixes the error codes.
+    check_edge=False for caps whose screw holes are meant to notch the edge."""
     ri, ro = cap_radii(cp, b, race)
     rh = cp.bearing_retainer_holes
 
@@ -26,7 +27,7 @@ def check_cap(cp: cap, b: bearing, race: str = "outer", name: str = "cap"):
             print("warning: support flange / cap reaches the bearing inner race")
         if rh.R - rh.r <= b.OD / 2:
             geometry_issue(f"{name}.holes_overlap_seat", "bearing retainer holes overlap the bearing seat")
-        if cp.edge_offset <= 0:
+        if check_edge and cp.edge_offset <= 0:
             geometry_issue(f"{name}.edge_offset", "cap edge_offset must be > 0 (screw holes would break through the edge)")
     else:
         if ro >= b.OD / 2:
@@ -57,9 +58,9 @@ def make_cap(cp: cap, b: bearing, race: str = "outer", hole_delta: float = 0.0,
             if cutouts is not None:
                 with PolarLocations(cutouts.R, cutouts.N, start_angle=cutouts.start_angle):
                     Circle(cutouts.r, mode=Mode.SUBTRACT)
-                if edge_fillet > 0:     # the notch corners sit on the outer circle
-                    corners = [v for v in sk.vertices() if abs((v.X ** 2 + v.Y ** 2) ** 0.5 - ro) < 1e-3]
-                    if corners:
-                        fillet(corners, edge_fillet)
+            if edge_fillet > 0:     # notch corners (holes breaking the edge) sit on the outer circle
+                corners = [v for v in sk.vertices() if abs((v.X ** 2 + v.Y ** 2) ** 0.5 - ro) < 1e-3]
+                if corners:
+                    fillet(corners, edge_fillet)
         extrude(amount=cp.flange.thickness)
     return part.part

@@ -373,7 +373,13 @@ class gearbox:
         if tol.enabled:   # the motor-hole fit follows the motor's mounting style
             fit = "loose" if self.base.drive_motor.face_mount else "tight"
             tol = dataclasses.replace(tol, fits={**tol.fits, "base.motor_holes": fit})
-        layout = self._layout_cache if not tol.enabled else self._layout(tol)
+        if not tol.enabled:
+            layout = self._layout_cache
+        elif self.strict:
+            layout = self._layout(tol)
+        else:
+            with collecting_issues():
+                layout = self._layout(tol)
         kinds = self.part_kinds()
         keep = {n: v for n, v in layout.items() if scope == "all" or kinds[n] == "custom"}
         os.makedirs(out_dir, exist_ok=True)

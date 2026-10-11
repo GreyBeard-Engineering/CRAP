@@ -518,21 +518,20 @@ function showProblems(body) {
     pairs.set(key, (pairs.get(key) ?? 0) + 1);
   }
   errorEl.replaceChildren();
-  const head = document.createElement("div");
-  if (pairs.size) {
-    head.textContent = "Colliding parts (shown in red):";
+  const list = (title, items) => {
+    const head = document.createElement("div");
+    head.textContent = title;
     const ul = document.createElement("ul");
     ul.className = "collision-list";
-    for (const [k, n] of pairs) {
+    for (const text of items) {
       const li = document.createElement("li");
-      li.textContent = n > 1 ? `${k} (${n})` : k;
+      li.textContent = text;
       ul.append(li);
     }
     errorEl.append(head, ul);
-  } else {
-    head.textContent = "No collisions, but the design breaks the layout rules (details in the server log).";
-    errorEl.append(head);
-  }
+  };
+  if (pairs.size) list("Colliding parts (shown in red):", [...pairs].map(([k, n]) => (n > 1 ? `${k} (${n})` : k)));
+  if (body.failed_parts?.length) list("Couldn't build:", body.failed_parts);
   errorEl.hidden = false;
 }
 const rebuildBtn = document.getElementById("rebuild");
@@ -590,7 +589,7 @@ async function rebuild() {
     built = readForm();
     const n = Object.values(body.instances).reduce((a, l) => a + l.length, 0);
     const secs = ((performance.now() - t0) / 1000).toFixed(1);
-    shownHasProblems = (body.issues?.length ?? 0) > 0 || body.solver?.ok === false;
+    shownHasProblems = body.valid === false;     // only collisions or unbuildable parts count
     if (shownHasProblems) {
       showProblems(body);
       setStatus(`built with problems · ${secs} s`, "bad");
@@ -611,22 +610,12 @@ async function rebuild() {
 function showSolverReport(solver, failLog) {
   const el = document.getElementById("solver-report");
   if (!solver) {
-    el.textContent = failLog?.length ? `solver tried:\n- ${failLog.join("\n- ")}` : "";
-    el.className = "bad";
+    el.textContent = "";
     return;
   }
-  if (solver.ok === false) {
-    el.textContent = `no valid design found · collision check (${solver.check_seconds} s): ` +
-                     `${solver.collisions.length} colliding pairs`;
-    el.className = "bad";
-    return;
-  }
-  const lines = [`solved in ${solver.iterations} iteration${solver.iterations === 1 ? "" : "s"}`,
-                 `collision check (${solver.check_seconds} s): ` +
-                 (solver.collisions.length ? `${solver.collisions.length} collisions` : "none")];
-  for (const l of solver.log) lines.push(`- ${l}`);
-  el.textContent = lines.join("\n");
-  el.className = "";
+  const n = solver.collisions.length;
+  el.textContent = `collision check (${solver.check_seconds} s): ` + (n ? `${n} colliding pairs` : "none");
+  el.className = n ? "bad" : "";
 }
 
 form.addEventListener("input", () => { updateDirty(); syncMotorFit(); });
@@ -770,6 +759,67 @@ function readTolerancing() {
 }
 
 tolEnabled.addEventListener("change", () => (tolFields.disabled = !tolEnabled.checked));
+
+// ---------- save / load configuration ----------
+const cfgStatus = document.getElementById("cfg-status");
+
+document.getElementById("cfg-save").addEventListener("click", () => {
+  const values = readForm();
+  const tol = readTolerancing();
+  if (!values) return (cfgStatus.textContent = "Fix the highlighted dimensions first.");
+  const cfg = {
+    app: "CRAP", version: 1, mode, values,
+    tolerancing: tol,
+    export: { format: document.getElementById("export-format").value,
+              scope: document.getElementById("export-scope").value },
+  };
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([JSON.stringify(cfg, null, 2)], { type: "application/json" }));
+  const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, "-");
+  a.download = `crap_config_${stamp}.json`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+  cfgStatus.textContent = `saved ${a.download}`;
+});
+
+const cfgFile = document.getElementById("cfg-file");
+document.getElementById("cfg-load").addEventListener("click", () => cfgFile.click());
+cfgFile.addEventListener("change", async () => {
+  const file = cfgFile.files[0];
+  cfgFile.value = "";
+  if (!file) return;
+  let cfg;
+  try {
+    cfg = JSON.parse(await file.text());
+  } catch (err) {
+    return (cfgStatus.textContent = `Couldn't read ${file.name}: ${err.message}`);
+  }
+  if (!cfg || typeof cfg.values !== "object") {
+    return (cfgStatus.textContent = `${file.name} isn't a CRAP configuration (no "values").`);
+  }
+  // start from the defaults so anything the file leaves out is sensible, then apply it
+  renderForm(schema.values);
+  setFormValues(cfg.values);
+  if (cfg.mode === "simple" || cfg.mode === "advanced") setMode(cfg.mode);
+  const t = cfg.tolerancing;
+  if (t) {
+    if (typeof t.enabled === "boolean") {
+      tolEnabled.checked = t.enabled;
+      tolFields.disabled = !t.enabled;
+    }
+    for (const input of document.querySelectorAll("input[data-mag]")) {
+      if (t.magnitudes?.[input.dataset.mag] !== undefined) input.value = t.magnitudes[input.dataset.mag];
+    }
+    for (const sel of document.querySelectorAll("select[data-fit]")) {
+      if (t.fits?.[sel.dataset.fit]) sel.value = t.fits[sel.dataset.fit];
+    }
+  }
+  if (cfg.export?.format) document.getElementById("export-format").value = cfg.export.format;
+  if (cfg.export?.scope) document.getElementById("export-scope").value = cfg.export.scope;
+  syncMotorFit();
+  updateDirty();
+  cfgStatus.textContent = `loaded ${file.name}; press Rebuild to see it`;
+});
 document.getElementById("fits-reset").addEventListener("click", () => { renderFits(); syncMotorFit(); });
 
 document.getElementById("export-btn").addEventListener("click", async (ev) => {

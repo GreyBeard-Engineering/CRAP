@@ -158,8 +158,8 @@ def derive(spec: simple_spec, rules: design_rules = RULES, adj: dict | None = No
                   edge_offset=mw)
 
     # output holes, as far out as the walls allow (largest moment arm: lowest pin forces).
-    # The cycloid cap's edge is the hole circle + 1/4 hole radius, so the holes notch it, and
-    # its screws sit half a pitch between the holes.
+    # The cycloid cap is a small ring whose edge is its screw circle + 1/4 screw radius (the
+    # screws notch it); the holes must clear the cap and the screw heads.
     r_oh = nr.OD / 2 + e                      # cycloid hole (needle roller orbits by e)
     pin_r = nr.ID / 2                         # needle screw / output plate hole
     root = spec.roller_R - rb.OD / 2 - e      # smallest cycloid radius
@@ -168,32 +168,21 @@ def derive(spec: simple_spec, rules: design_rules = RULES, adj: dict | None = No
     hi = min(root - mw - r_oh, plate_r - mw - pin_r)
     lo = max(ib.OD / 2 + mw + r_oh,           # wall between the bearing seat and the holes
              shoulder + mw + pin_r,           # wall between the output shoulder and the pins
-             R_c + d_c / 2 + mw - r_oh / 4)   # wall between the cap screws and the cap edge
-                                              # (the edge is the hole circle + r/4)
+             R_c + _head(d_c)[0] / 2 + cl / 2 + r_oh)   # cap screw heads clear of the holes
     if lo > hi + 1e-6:                        # (tolerance: float noise is not a real shortfall)
+        cap_limits = lo == R_c + _head(d_c)[0] / 2 + cl / 2 + r_oh
+        if cap_limits and d_c > SCREW_SIZES[0] and problems is None:
+            raise GeometryError("derive.output_holes_dont_fit", "cycloid cap screw heads crowd the output holes")
         problem(f"the output holes (Ø{2 * r_oh:g} for a Ø{nr.OD:g} needle roller orbiting by e) "
                 f"need {_up(lo - hi)} mm more radial room: increase roller R to at least "
                 f"{_up(spec.roller_R + lo - hi)} mm, or use a smaller e, needle roller, "
                 f"input or output bearing")
     R_oh = hi if lo <= hi + 1e-6 else (lo + hi) / 2
-    head_r = _head(d_c)[0] / 2
-    need = r_oh + max(d_c / 2 + mw, head_r + cl / 2)   # screw centre to hole centre
-    N_oh = None
-    for n in range(_pattern_n(R_oh, 4 * r_oh, 3, 8), 2, -1):  # web between holes >= one hole dia
-        if math.hypot(R_oh - R_c * math.cos(math.pi / n), R_c * math.sin(math.pi / n)) >= need:
-            N_oh = n
-            break
-    if N_oh is None:
-        if d_c > SCREW_SIZES[0] and problems is None:
-            raise GeometryError("derive.output_holes_dont_fit",
-                                "cycloid cap screws don't fit between the output holes")
-        N_oh = 3
-        problem("the cycloid cap screws don't fit between the output holes even at the smallest "
-                "screw with 3 holes: increase roller R or use a smaller input bearing or needle roller")
+    N_oh = _pattern_n(R_oh, 4 * r_oh, 3, 8)   # web between holes >= one hole diameter
     cyc_cap = cap(flange=_flange(ib, rules),
-                  bearing_retainer_holes=patterned_hole(r=d_c / 2, R=r3(R_c), N=N_oh,
-                                                        start_angle=r3(180 / N_oh)),
-                  edge_offset=r3(R_oh + r_oh / 4 - R_c - d_c / 2))   # (the generator sets this)
+                  bearing_retainer_holes=patterned_hole(r=d_c / 2, R=r3(R_c),
+                                                        N=_pattern_n(R_c, 4 * _head(d_c)[0], 3, 8)),
+                  edge_offset=r3(-0.75 * d_c / 2))   # (the generator sets this: screws notch the edge)
 
     # stack gaps, driven by the screw heads that sit in them
     needle_d = nr.ID
