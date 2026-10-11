@@ -5,8 +5,12 @@ from part_generation_fcns.paths import ensure_parent
 from part_generation_fcns.tolerancing import NOMINAL, tolerancing
 
 
+def eccentric_insert_journal_height(ei: eccentric_insert) -> float:
+    return ei.journal_height if getattr(ei, "journal_height", None) is not None else ei.input_bearing.thickness
+
+
 def eccentric_insert_thickness(ei: eccentric_insert) -> float:
-    return ei.flange.thickness + ei.input_bearing.th
+    return ei.flange.thickness + eccentric_insert_journal_height(ei)
 
 
 def make_eccentric_insert(ei: eccentric_insert, tol: tolerancing = NOMINAL) -> Part:
@@ -46,7 +50,7 @@ def make_eccentric_insert_step(ei: eccentric_insert, path: str = "steps/eccentri
 
 if __name__ == "__main__":
     ei = eccentric_insert(
-        input_bearing=bearing(ID=10, OD=19, th=5),                 # 6800-ish
+        input_bearing=bearing(ID=10, OD=19, thickness=5),                 # 6800-ish
         flange=flange(thickness=12.0, offset=1.5),
         motor=motor(shaft_r=2.5, mounting_holes=patterned_hole(r=1.6, R=21.92, N=4)),  # NEMA17
         e=1.2,

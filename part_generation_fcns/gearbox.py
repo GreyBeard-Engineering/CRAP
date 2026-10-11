@@ -10,7 +10,7 @@ from part_generation_fcns.cycloid_step import cycloid_thickness, make_cycloid, m
 from part_generation_fcns.eccentric_insert_step import make_eccentric_insert
 from part_generation_fcns.output_step import make_output, output_height, output_plate_r
 from part_generation_fcns.cap_step import cap_radii, make_cap
-from part_generation_fcns.hardware import bolt_name, make_bearing, make_bolt, make_spacer, socket_head_bolt
+from part_generation_fcns.hardware import bolt_name, bored_cylinder, make_bearing, make_bolt, make_spacer, socket_head_bolt
 from part_generation_fcns.tolerancing import NOMINAL, tolerancing
 
 
@@ -41,6 +41,8 @@ class gearbox:
         base_cycloid_spacing: float, # axial gap: top of base -> bottom of cycloid
         cap_output_spacing: float, # axial gap: top of cycloid cap -> bottom of output plate
         output_top_spacing: float, # axial gap: top of output plate -> bottom of top
+        inter_disk_spacing: float = 3.0, # axial gap: top of cycloid cap -> bottom of next disc
+        num_disks: int = 1, # number of stacked cycloid discs
         # cycloid
         e: float,
         input_bearing: bearing,
@@ -51,7 +53,8 @@ class gearbox:
         # base
         drive_motor: motor,
         shaft_hole_offset: float,
-        base_t: float,
+        base_thickness: float = None,
+        base_t: float | None = None,
         mounting_holes: patterned_hole,
         mounting_hole_offset: float,
         mounting_hole_fillet_r: float,
@@ -65,13 +68,27 @@ class gearbox:
         # output
         output_flange_offset: float,
         output_plate_edge_offset: float, # plate edge beyond the needle screw holes' outer edge
-        output_plate_t: float,
+        output_plate_thickness: float = None,
+        output_plate_t: float | None = None,
         output_bore_r: float,
         output_cap: cap, # inner-race cap; r is its inner radius
         # export
         assembly_path: str | None = "steps/gearbox/gearbox.step",
         strict: bool = True, # False: record geometry problems in .issues and build what it can
     ):
+        if base_thickness is None:
+            if base_t is not None:
+                base_thickness = base_t
+            else:
+                raise TypeError("gearbox missing required argument: 'base_thickness'")
+        if output_plate_thickness is None:
+            if output_plate_t is not None:
+                output_plate_thickness = output_plate_t
+            else:
+                raise TypeError("gearbox missing required argument: 'output_plate_thickness'")
+
+        self.num_disks = num_disks
+        self.inter_disk_spacing = inter_disk_spacing
         self.base_cycloid_spacing = base_cycloid_spacing
         self.cap_output_spacing = cap_output_spacing
         self.output_top_spacing = output_top_spacing
@@ -93,7 +110,7 @@ class gearbox:
             roller_holes_R=roller_R,
             roller_holes_N=ratio + 1,
             edge_offset=housing_edge_offset,
-            t=base_t,
+            thickness=base_thickness,
             mounting_holes=mounting_holes,
             mounting_hole_offset=mounting_hole_offset,
             mounting_hole_fillet_r=mounting_hole_fillet_r,
@@ -113,11 +130,24 @@ class gearbox:
         self.eccentric_insert = eccentric_insert(
             input_bearing=input_bearing,
             flange=flange(
-                thickness=base_cycloid_spacing + base_t + base_cycloid_spacing + cycloid_cap.flange.thickness,
+                thickness=base_cycloid_spacing + base_thickness + base_cycloid_spacing + cycloid_cap.flange.thickness,
                 offset=eccentric_insert_flange_offset,
             ),
             motor=drive_motor,
             e=e,
+        )
+        # inter-disk eccentric insert for subsequent discs:
+        # bottom thickness = cycloid flange thickness
+        # thickness above flange = cycloid thickness - cycloid flange thickness + cycloid cap thickness
+        self.eccentric_insert_stacked = eccentric_insert(
+            input_bearing=input_bearing,
+            flange=flange(
+                thickness=cycloid_cap.flange.thickness,
+                offset=eccentric_insert_flange_offset,
+            ),
+            motor=drive_motor,
+            e=e,
+            journal_height=input_bearing.thickness + cycloid_cap.flange.thickness,
         )
         # output shoulder spans the output-top gap and the top's support lip,
         # so the output bearing lands on both the shoulder and the lip
@@ -128,7 +158,7 @@ class gearbox:
                 offset=output_flange_offset,
             ),
             plate_edge_offset=output_plate_edge_offset,
-            plate_t=output_plate_t,
+            plate_thickness=output_plate_thickness,
             output_needle_roller=output_needle_roller,
             output_holes_R=output_holes_R,
             output_holes_N=output_holes_N,
@@ -158,6 +188,11 @@ class gearbox:
         if insert_r >= cycloid_lip_r:
             geometry_issue("assembly.insert_hits_cycloid_lip", "eccentric insert flange hits the cycloid's bearing support lip")
 
+        rh = self.cycloid.cap.bearing_retainer_holes
+        cap_screw = socket_head_bolt(2 * rh.r, 1.0)
+        if self.num_disks > 1 and self.inter_disk_spacing < cap_screw.head_h:
+            geometry_issue("assembly.inter_disk_spacing_hits_screws", "inter_disk_spacing is smaller than the cycloid cap screw head height")
+
         shoulder_r = self.output.output_bearing.ID / 2 + self.output.flange.offset
         top_lip_r = self.top.output_bearing.OD / 2 - self.top.cap.flange.offset
         if shoulder_r >= top_lip_r:
@@ -169,17 +204,31 @@ class gearbox:
            cap_radii(self.top.cap, self.top.output_bearing, "outer")[0]:
             geometry_issue("assembly.output_cap_hits_top_cap", "output cap hits the top cap")
 
-    def stack(self) -> dict[str, float]:
+    def stack(self) -> dict[str, float | list[float]]:
         """Z of the underside of each plate-like part. z=0 is the underside of the base."""
         sbc = self.base_cycloid_spacing
-        z = {"base": 0.0, "eccentric_insert": -sbc}  # insert hangs below the base
-        z["cycloid"] = self.base.t + sbc
-        z["cycloid_cap"] = z["cycloid"] + cycloid_thickness(self.cycloid)
-        z["output"] = z["cycloid_cap"] + self.cycloid.cap.flange.thickness + self.cap_output_spacing
-        z["top"] = z["output"] + self.output.plate_t + self.output_top_spacing
+        t_cyc = cycloid_thickness(self.cycloid)
+        t_cap = self.cycloid.cap.flange.thickness
+        delta_disk = t_cyc + t_cap + self.inter_disk_spacing
+
+        z_cycloids = [self.base.thickness + sbc + k * delta_disk for k in range(self.num_disks)]
+        z_caps = [zc + t_cyc for zc in z_cycloids]
+        z_mids = [zc + t_cyc / 2 for zc in z_cycloids]
+
+        z = {
+            "base": 0.0,
+            "eccentric_insert": -sbc,
+            "cycloid": z_cycloids[0],
+            "cycloids": z_cycloids,
+            "cycloid_cap": z_caps[0],
+            "cycloid_caps": z_caps,
+            "cycloid_mid": z_mids[0],
+            "cycloid_mids": z_mids,
+        }
+        z["output"] = z_caps[-1] + t_cap + self.cap_output_spacing
+        z["top"] = z["output"] + self.output.plate_thickness + self.output_top_spacing
         z["top_cap"] = z["top"] + top_radii(self.top)[3]
         z["output_cap"] = z["output"] + output_height(self.output)
-        z["cycloid_mid"] = z["cycloid"] + cycloid_thickness(self.cycloid) / 2
         return z
 
     def _layout(self, tol: tolerancing = NOMINAL) -> dict[str, tuple[Part, list[Location]]]:
@@ -188,68 +237,172 @@ class gearbox:
         tol applies export fits; the default builds the nominal model."""
         z, e = self.stack(), self.cycloid.e
         c, tp, o = self.cycloid, self.top, self.output
+        N = self.num_disks
         L = {}
+
+        z_cycloids = z["cycloids"]
+        z_caps = z["cycloid_caps"]
+        z_mids = z["cycloid_mids"]
 
         # custom parts
         L["base"] = (self._try(lambda: make_base(self.base, tol), "base"), [Location((0, 0, z["base"]))])
         # insert's shaft hole is at local +e; turn it 180 deg so the hole lands on the motor axis
         L["eccentric_insert"] = (self._try(lambda: make_eccentric_insert(self.eccentric_insert, tol), "eccentric_insert"),
                                  [Location((e, 0, z["eccentric_insert"]), (0, 0, 180))])
-        L["cycloid"] = (self._try(lambda: make_cycloid(c, tol), "cycloid"), [Location((e, 0, z["cycloid"]))])
-        # the cycloid cap's outline is set by the output holes (notched, filleted)
-        L["cycloid_cap"] = (self._try(lambda: make_cycloid_cap(c, tol), "cycloid_cap"),
-                            [Location((e, 0, z["cycloid_cap"]))])
+        if N > 1:
+            locs_stacked = []
+            for k in range(1, N):
+                phi_k = k * 360.0 / N
+                rad = math.radians(phi_k)
+                z_k = z_cycloids[k]
+                locs_stacked.append(Location((e * math.cos(rad), e * math.sin(rad), z_k), (0, 0, 180 + phi_k)))
+            L["eccentric_insert_stacked"] = (
+                self._try(lambda: make_eccentric_insert(self.eccentric_insert_stacked, tol), "eccentric_insert_stacked"),
+                locs_stacked
+            )
+
+            r_sp_inner = self.base.drive_motor.shaft_r
+            r_sp_outer = c.input_bearing.ID / 2 - e
+            # spacer between insert 0 and insert 1: spans from top of insert 0 (z_caps[0])
+            # through cap 0 to the bottom of insert 1 (z_cycloids[1])
+            h_sp_1 = z_cycloids[1] - z_caps[0]
+            L["inter_eccentric_spacer"] = (
+                self._try(lambda: bored_cylinder(r_sp_outer, r_sp_inner, h_sp_1), "inter_eccentric_spacer"),
+                [Location((0, 0, z_caps[0]))]
+            )
+            if N > 2:
+                h_sp_k = self.inter_disk_spacing
+                locs_sp_k = [Location((0, 0, z_caps[k - 1] + c.cap.flange.thickness)) for k in range(2, N)]
+                L["inter_eccentric_spacer_upper"] = (
+                    self._try(lambda: bored_cylinder(r_sp_outer, r_sp_inner, h_sp_k), "inter_eccentric_spacer_upper"),
+                    locs_sp_k
+                )
+
+        locs_cycloid = []
+        locs_cap = []
+        locs_ib = []
+        for k in range(N):
+            phi_k = k * 360.0 / N
+            psi_k = phi_k
+            rad = math.radians(phi_k)
+            cx, cy = e * math.cos(rad), e * math.sin(rad)
+            locs_cycloid.append(Location((cx, cy, z_cycloids[k]), (0, 0, psi_k)))
+            locs_cap.append(Location((cx, cy, z_caps[k]), (0, 0, psi_k)))
+            locs_ib.append(Location((cx, cy, z_cycloids[k] + c.cap.flange.thickness)))
+
+        L["cycloid"] = (self._try(lambda: make_cycloid(c, tol), "cycloid"), locs_cycloid)
+        L["cycloid_cap"] = (self._try(lambda: make_cycloid_cap(c, tol), "cycloid_cap"), locs_cap)
+        L["input_bearing"] = (self._try(lambda: make_bearing(c.input_bearing), "input_bearing"), locs_ib)
+
         L["output"] = (self._try(lambda: make_output(o, tol), "output"), [Location((0, 0, z["output"]))])
         L["output_cap"] = (self._try(lambda: make_cap(o.cap, o.output_bearing, race="inner", hole_delta=tol.delta("output_cap.holes")), "output_cap"), [Location((0, 0, z["output_cap"]))])
         L["top"] = (self._try(lambda: make_top(tp, tol), "top"), [Location((0, 0, z["top"]))])
         L["top_cap"] = (self._try(lambda: make_cap(tp.cap, tp.output_bearing, hole_delta=tol.delta("top_cap.holes")), "top_cap"), [Location((0, 0, z["top_cap"]))])
 
-        # main bearings, seated on their support lips
-        L["input_bearing"] = (self._try(lambda: make_bearing(c.input_bearing), "input_bearing"),
-                              [Location((e, 0, z["cycloid"] + c.cap.flange.thickness))])
         L["output_bearing"] = (self._try(lambda: make_bearing(tp.output_bearing), "output_bearing"),
                                [Location((0, 0, z["top"] + tp.cap.flange.thickness))])
 
-        # ring rollers: midplane on the cycloid midplane, spacers down to the base and up to
-        # the top, all on a bolt from under the base through the top's base plate
+        # ring rollers: midplane on each cycloid midplane, spacers down to the base and up to
+        # the top, with inter-roller spacers between adjacent discs
         rb = c.roller_bearing
-        z_rb0 = z["cycloid_mid"] - rb.th / 2
-        z_rb1 = z_rb0 + rb.th
         ring = [(x, y) for x, y, _ in _polar(c.roller_R, c.ratio + 1)]
-        L["roller_bearing"] = (self._try(lambda: make_bearing(rb), "roller_bearing"), [Location((x, y, z_rb0)) for x, y in ring])
-        L["roller_spacer_bottom"] = (self._try(lambda: make_spacer(rb, z_rb0 - self.base.t, tol.delta("roller_spacer.bore")), "roller_spacer_bottom"),
-                                     [Location((x, y, self.base.t)) for x, y in ring])
-        L["roller_spacer_top"] = (self._try(lambda: make_spacer(rb, z["top"] - z_rb1, tol.delta("roller_spacer.bore")), "roller_spacer_top"),
-                                  [Location((x, y, z_rb1)) for x, y in ring])
-        # head on the top's base plate; passes through the top, spacers and bearing and
-        # threads into the base
+        z_rb0 = z_mids[0] - rb.thickness / 2
+        z_rb_last = z_mids[-1] + rb.thickness / 2
+
+        locs_rb = []
+        for k in range(N):
+            z_rb_k = z_mids[k] - rb.thickness / 2
+            locs_rb.extend([Location((x, y, z_rb_k)) for x, y in ring])
+        L["roller_bearing"] = (self._try(lambda: make_bearing(rb), "roller_bearing"), locs_rb)
+
+        L["roller_spacer_bottom"] = (
+            self._try(lambda: make_spacer(rb, z_rb0 - self.base.thickness, tol.delta("roller_spacer.bore")), "roller_spacer_bottom"),
+            [Location((x, y, self.base.thickness)) for x, y in ring]
+        )
+
+        if N > 1:
+            h_inter = (z_mids[1] - z_mids[0]) - rb.thickness
+            locs_inter_spacer = []
+            for k in range(1, N):
+                z_sp = z_mids[k - 1] + rb.thickness / 2
+                locs_inter_spacer.extend([Location((x, y, z_sp)) for x, y in ring])
+            L["inter_roller_spacer"] = (
+                self._try(lambda: make_spacer(rb, h_inter, tol.delta("roller_spacer.bore")), "inter_roller_spacer"),
+                locs_inter_spacer
+            )
+
+        L["roller_spacer_top"] = (
+            self._try(lambda: make_spacer(rb, z["top"] - z_rb_last, tol.delta("roller_spacer.bore")), "roller_spacer_top"),
+            [Location((x, y, z_rb_last)) for x, y in ring]
+        )
+
         z_ring_head = z["top"] + tp.base_thickness
         ring_bolt = socket_head_bolt(rb.ID, z_ring_head - z["base"])
-        L[f"ring_bolt_{bolt_name(ring_bolt)}"] = (self._try(lambda: make_bolt(ring_bolt), f"ring_bolt_{bolt_name(ring_bolt)}"),
-                                                  [Location((x, y, z_ring_head)) for x, y in ring])
+        L[f"ring_bolt_{bolt_name(ring_bolt)}"] = (
+            self._try(lambda: make_bolt(ring_bolt), f"ring_bolt_{bolt_name(ring_bolt)}"),
+            [Location((x, y, z_ring_head)) for x, y in ring]
+        )
 
-        # output needles: roller midplane on the cycloid midplane, spacer up to the output
+        # output needles: roller midplane on each cycloid midplane, spacer up to the output
         # plate; a screw goes in from below, head under the roller, and threads into the plate
         nr = o.output_needle_roller
-        z_nr0 = z["cycloid_mid"] - nr.th / 2
-        z_nr1 = z_nr0 + nr.th
         pins = [(x, y) for x, y, _ in _polar(o.output_holes_R, o.output_holes_N)]
-        L["needle_roller"] = (self._try(lambda: make_bearing(nr), "needle_roller"), [Location((x, y, z_nr0)) for x, y in pins])
-        L["needle_spacer"] = (self._try(lambda: make_spacer(nr, z["output"] - z_nr1, tol.delta("needle_spacer.bore")), "needle_spacer"), [Location((x, y, z_nr1)) for x, y in pins])
-        needle_bolt = socket_head_bolt(nr.ID, z["output"] + o.plate_t - z_nr0)
+        z_nr0 = z_mids[0] - nr.thickness / 2
+        z_nr_last = z_mids[-1] + nr.thickness / 2
+
+        locs_nr = []
+        for k in range(N):
+            z_nr_k = z_mids[k] - nr.thickness / 2
+            locs_nr.extend([Location((x, y, z_nr_k)) for x, y in pins])
+        L["needle_roller"] = (self._try(lambda: make_bearing(nr), "needle_roller"), locs_nr)
+
+        if N > 1:
+            h_nr_inter = (z_mids[1] - z_mids[0]) - nr.thickness
+            locs_nr_inter = []
+            for k in range(1, N):
+                z_sp = z_mids[k - 1] + nr.thickness / 2
+                locs_nr_inter.extend([Location((x, y, z_sp)) for x, y in pins])
+            L["inter_needle_spacer"] = (
+                self._try(lambda: make_spacer(nr, h_nr_inter, tol.delta("needle_spacer.bore")), "inter_needle_spacer"),
+                locs_nr_inter
+            )
+
+        L["needle_spacer"] = (
+            self._try(lambda: make_spacer(nr, z["output"] - z_nr_last, tol.delta("needle_spacer.bore")), "needle_spacer"),
+            [Location((x, y, z_nr_last)) for x, y in pins]
+        )
+        needle_bolt = socket_head_bolt(nr.ID, z["output"] + o.plate_thickness - z_nr0)
         # flipped: head below the roller, shank pointing up
-        L[f"needle_bolt_{bolt_name(needle_bolt)}"] = (self._try(lambda: make_bolt(needle_bolt), f"needle_bolt_{bolt_name(needle_bolt)}"),
-                                                      [Location((x, y, z_nr0), (180, 0, 0)) for x, y in pins])
+        L[f"needle_bolt_{bolt_name(needle_bolt)}"] = (
+            self._try(lambda: make_bolt(needle_bolt), f"needle_bolt_{bolt_name(needle_bolt)}"),
+            [Location((x, y, z_nr0), (180, 0, 0)) for x, y in pins]
+        )
 
         # cap screws: head on the cap, engaging the part below by the bearing thickness
-        for name, cp, b, cx in (("cycloid_cap", c.cap, c.input_bearing, e),
-                                ("output_cap", o.cap, o.output_bearing, 0.0),
-                                ("top_cap", tp.cap, tp.output_bearing, 0.0)):
+        rh = c.cap.bearing_retainer_holes
+        bt = socket_head_bolt(2 * rh.r, c.cap.flange.thickness + c.input_bearing.thickness)
+        locs_cap_bolts = []
+        for k in range(N):
+            phi_k = k * 360.0 / N
+            psi_k = phi_k
+            rad = math.radians(phi_k)
+            cx, cy = e * math.cos(rad), e * math.sin(rad)
+            z_head = z_caps[k] + c.cap.flange.thickness
+            for _, _, a in _polar(rh.R, rh.N, rh.start_angle):
+                a_rot = math.radians(a + psi_k)
+                locs_cap_bolts.append(Location((cx + rh.R * math.cos(a_rot), cy + rh.R * math.sin(a_rot), z_head)))
+        L[f"cycloid_cap_bolt_{bolt_name(bt)}"] = (
+            self._try(lambda: make_bolt(bt), f"cycloid_cap_bolt_{bolt_name(bt)}"),
+            locs_cap_bolts
+        )
+
+        for name, cp, b in (("output_cap", o.cap, o.output_bearing),
+                            ("top_cap", tp.cap, tp.output_bearing)):
             rh = cp.bearing_retainer_holes
-            bt = socket_head_bolt(2 * rh.r, cp.flange.thickness + b.th)
+            bt = socket_head_bolt(2 * rh.r, cp.flange.thickness + b.thickness)
             z_head = z[name] + cp.flange.thickness
             L[f"{name}_bolt_{bolt_name(bt)}"] = (self._try(lambda: make_bolt(bt), f"{name}_bolt_{bolt_name(bt)}"),
-                [Location((cx + x, y, z_head)) for x, y, _ in _polar(rh.R, rh.N, rh.start_angle)])
+                [Location((x, y, z_head)) for x, y, _ in _polar(rh.R, rh.N, rh.start_angle)])
 
         L = {name: v for name, v in L.items() if v[0] is not None}   # lenient: skip unbuildable parts
         for name, (part, _) in L.items():
@@ -299,12 +452,12 @@ class gearbox:
     _MOTION_GROUPS = {
         "base": "housing", "top": "housing", "top_cap": "housing", "output_bearing": "housing",
         "roller_bearing": "housing", "roller_spacer_bottom": "housing",
-        "roller_spacer_top": "housing", "ring_bolt": "housing", "top_cap_bolt": "housing",
-        "eccentric_insert": "input",
+        "roller_spacer_top": "housing", "inter_roller_spacer": "housing", "ring_bolt": "housing", "top_cap_bolt": "housing",
+        "eccentric_insert": "input", "eccentric_insert_stacked": "input", "inter_eccentric_spacer": "input",
         "cycloid": "cycloid", "cycloid_cap": "cycloid", "input_bearing": "cycloid",
         "cycloid_cap_bolt": "cycloid",
         "output": "output", "output_cap": "output", "needle_roller": "output",
-        "needle_spacer": "output", "needle_bolt": "output", "output_cap_bolt": "output",
+        "needle_spacer": "output", "inter_needle_spacer": "output", "needle_bolt": "output", "output_cap_bolt": "output",
     }
 
     def motion_groups(self) -> dict[str, str]:
@@ -412,7 +565,17 @@ _POOL = None
 
 def _overlap(a, b) -> float:
     common = a & b
-    return 0.0 if common is None else common.volume
+    if common is None or common.volume <= 0:
+        return 0.0
+    # In rare cases with periodic B-spline tangent contact, OpenCASCADE BOP produces
+    # a false common volume whose center of mass is outside the intersecting solids.
+    try:
+        c = common.center()
+        if not (a.is_inside(c) or b.is_inside(c)):
+            return 0.0
+    except Exception:
+        pass
+    return common.volume
 
 
 def _overlap_chunk(args) -> list[tuple[int, int, float]]:
@@ -456,16 +619,18 @@ def _parallel_overlaps(placed, pairs) -> list[tuple[int, int, float]]:
 # example gearbox: NEMA17 drive, 23:1
 EXAMPLE_KWARGS = dict(
     ratio=23,
-    roller_bearing=bearing(ID=2, OD=5, th=2.5),                # MR52-ish
+    roller_bearing=bearing(ID=2, OD=5, thickness=2.5),         # MR52-ish
     roller_R=40.0,
     housing_edge_offset=7.0,                                   # 48 mm radius
     base_cycloid_spacing=1.0,
     cap_output_spacing=3.0,                                    # clears the 2 mm cap screw heads
     output_top_spacing=1.0,
+    inter_disk_spacing=3.0,
+    num_disks=1,
 
     e=1.2,
-    input_bearing=bearing(ID=10, OD=19, th=5),                 # 6800-ish
-    output_needle_roller=bearing(ID=3, OD=6, th=2.5),          # MR63-ish
+    input_bearing=bearing(ID=10, OD=19, thickness=5),          # 6800-ish
+    output_needle_roller=bearing(ID=3, OD=6, thickness=2.5),   # MR63-ish
     output_holes_R=24.0,
     output_holes_N=6,
     cycloid_cap=cap(
@@ -479,12 +644,13 @@ EXAMPLE_KWARGS = dict(
         mounting_holes=patterned_hole(r=1.6, R=21.92, N=4),    # M3 on 31 mm square
     ),
     shaft_hole_offset=9.0,
+    base_thickness=5.0,
     base_t=5.0,
     mounting_holes=patterned_hole(r=2.2, R=7.0, N=2),          # M4, centers 7 mm beyond the edge (R 55)
     mounting_hole_offset=3.0,
     mounting_hole_fillet_r=3.0,
 
-    output_bearing=bearing(ID=25, OD=37, th=7),                # 6805-ish
+    output_bearing=bearing(ID=25, OD=37, thickness=7),         # 6805-ish
     output_bearing_offset=6.0,
     top_base_thickness=4.0,
     top_cap=cap(
@@ -497,6 +663,7 @@ EXAMPLE_KWARGS = dict(
 
     output_flange_offset=2.0,
     output_plate_edge_offset=8.5,                              # 34 mm radius
+    output_plate_thickness=4.0,
     output_plate_t=4.0,
     output_bore_r=6.0,
     output_cap=cap(

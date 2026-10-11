@@ -5,6 +5,7 @@ import io
 import json
 import tempfile
 import threading
+import typing
 import zipfile
 from pathlib import Path
 
@@ -37,15 +38,15 @@ _solved: dict[str, object] = {}       # simple spec (json) -> SolveResult, so ex
 
 # constructor argument -> type (dataclass, int or float); assembly_path and strict are not user-facing
 _ARG_TYPES = {name: p.annotation for name, p in inspect.signature(gearbox.__init__).parameters.items()
-              if name not in ("self", "assembly_path", "strict")}
+              if name not in ("self", "assembly_path", "strict", "base_t", "output_plate_t")}
 
 
 # Manual Configuration layout: always-visible boxes on top, then tabs (a tab holds either a
 # list of constructor arguments or further sub-tabs)
 LAYOUT = {
     "pinned": {
-        "Key Parameters": ["e", "roller_R", "ratio"],
-        "Plate Spacing": ["base_cycloid_spacing", "cap_output_spacing", "output_top_spacing"],
+        "Key Parameters": ["num_disks", "e", "roller_R", "ratio"],
+        "Plate Spacing": ["base_cycloid_spacing", "inter_disk_spacing", "cap_output_spacing", "output_top_spacing"],
     },
     "tabs": {
         "Bearings": ["roller_bearing", "input_bearing", "output_needle_roller", "output_bearing"],
@@ -53,19 +54,22 @@ LAYOUT = {
         "Parts": {
             "Housing": ["housing_edge_offset"],
             "Cycloid": ["output_holes_R", "output_holes_N", "cycloid_cap"],
-            "Base": ["shaft_hole_offset", "base_t", "mounting_holes", "mounting_hole_offset",
+            "Base": ["shaft_hole_offset", "base_thickness", "mounting_holes", "mounting_hole_offset",
                      "mounting_hole_fillet_r"],
             "Top": ["output_bearing_offset", "top_base_thickness", "top_cap"],
             "Eccentric insert": ["eccentric_insert_flange_offset"],
-            "Output": ["output_flange_offset", "output_plate_edge_offset", "output_plate_t", "output_bore_r", "output_cap"],
+            "Output": ["output_flange_offset", "output_plate_edge_offset", "output_plate_thickness", "output_bore_r", "output_cap"],
         },
     },
 }
-LABELS = {"ratio": "gearbox ratio", "e": "eccentricity e",
-          "base_cycloid_spacing": "base → cycloid", "cap_output_spacing": "cycloid cap → output",
+LABELS = {"ratio": "gearbox ratio", "e": "eccentricity e", "num_disks": "cycloid disc count",
+          "base_cycloid_spacing": "base → cycloid", "inter_disk_spacing": "inter-disk spacing",
+          "cap_output_spacing": "cycloid cap → output",
           "output_top_spacing": "output → top",
           "roller_R": "roller R (from centerline)",
           "housing_edge_offset": "edge offset (beyond roller holes)",
+          "base_thickness": "base thickness",
+          "output_plate_thickness": "output plate thickness",
           "output_plate_edge_offset": "plate edge offset (beyond needle screw holes)",
           "mounting_holes.R": "R (beyond base edge)",
           "cycloid_cap.edge_offset": "edge offset (unused: set by its screw holes)",
@@ -86,8 +90,17 @@ _laid_out = _layout_args(LAYOUT["pinned"]) + _layout_args(LAYOUT["tabs"])
 assert sorted(_laid_out) == sorted(_ARG_TYPES), "LAYOUT out of sync with gearbox()"
 
 
+def _unwrap_type(tp):
+    if typing.get_origin(tp) is not None:
+        args = [a for a in typing.get_args(tp) if a is not type(None)]
+        if args:
+            return args[0]
+    return tp
+
+
 def _types(tp):
     """Mirror of a value's structure with "int" / "float" leaves."""
+    tp = _unwrap_type(tp)
     if dataclasses.is_dataclass(tp):
         return {f.name: _types(f.type) for f in dataclasses.fields(tp)}
     return tp.__name__
@@ -99,6 +112,7 @@ def _to_json(v):
 
 def _from_json(tp, v):
     """Rebuild a (nested) dataclass from JSON; fields with defaults may be omitted."""
+    tp = _unwrap_type(tp)
     if dataclasses.is_dataclass(tp):
         return tp(**{f.name: _from_json(f.type, v[f.name]) for f in dataclasses.fields(tp)
                      if f.name in v or f.default is dataclasses.MISSING})

@@ -13,6 +13,7 @@ _COLORS = {
     "cycloid": "#d98c3f",
     "cycloid_cap": "#e8b070",
     "eccentric_insert": "#c0504d",
+    "eccentric_insert_stacked": "#c0504d",
     "output": "#8064a2",
     "output_cap": "#a58bc4",
 }
@@ -74,6 +75,7 @@ def gearbox_payload(gb: gearbox) -> dict:
         "motion": {
             "e": gb.cycloid.e,
             "ratio": gb.cycloid.ratio,
+            "num_disks": gb.num_disks,
             # the assembly is posed at input angle 0, with the cycloid offset by +e along X
             "cycloid_center": [gb.cycloid.e, 0.0],
             "height": z["top_cap"] + gb.top.cap.flange.thickness,

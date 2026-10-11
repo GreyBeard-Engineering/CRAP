@@ -11,10 +11,10 @@ from part_generation_fcns.cycloid_step import cycloid_cap, cycloid_profile, cycl
 
 def make_test_cycloid() -> cycloid:
     return cycloid(
-        roller_bearing=bearing(ID=2, OD=5, th=2.5),       # MR52-ish
+        roller_bearing=bearing(ID=2, OD=5, thickness=2.5),       # MR52-ish
         roller_R=40.0,
-        input_bearing=bearing(ID=10, OD=19, th=5),         # 6800-ish
-        output_needle_roller=bearing(ID=3, OD=6, th=2.5),  # MR63-ish
+        input_bearing=bearing(ID=10, OD=19, thickness=5),         # 6800-ish
+        output_needle_roller=bearing(ID=3, OD=6, thickness=2.5),  # MR63-ish
         output_holes_R=24.0,
         output_holes_N=6,
         e=1.2,

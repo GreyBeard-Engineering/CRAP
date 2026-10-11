@@ -70,7 +70,7 @@ def make_base(b: base, tol: tolerancing = NOMINAL) -> Part:
                 Circle(b.roller_bearing.ID / 2 + tol.delta("base.roller_holes"), mode=Mode.SUBTRACT)
             with PolarLocations(mh.R, mh.N, start_angle=mh.start_angle):
                 Circle(b.mounting_holes.r + tol.delta("base.mounting_holes"), mode=Mode.SUBTRACT)
-        extrude(amount=b.t)
+        extrude(amount=b.thickness)
     return part.part
 
 
@@ -88,11 +88,11 @@ if __name__ == "__main__":
             mounting_holes=patterned_hole(r=1.6, R=21.92, N=4),    # M3 on 31 mm square
         ),
         shaft_hole_offset=9.0,                                     # clears 22 mm boss
-        roller_bearing=bearing(ID=2, OD=5, th=2.5),                # MR52-ish, matches cycloid
+        roller_bearing=bearing(ID=2, OD=5, thickness=2.5),                # MR52-ish, matches cycloid
         roller_holes_R=40.0,
         roller_holes_N=24,                                         # ratio + 1 rollers
         edge_offset=7.0,                                           # 48 mm radius
-        t=5.0,
+        thickness=5.0,
         mounting_holes=patterned_hole(r=2.2, R=7.0, N=2),          # M4, centers 7 mm beyond the edge (R 55)
         mounting_hole_offset=3.0,
         mounting_hole_fillet_r=3.0,

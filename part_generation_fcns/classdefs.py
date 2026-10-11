@@ -4,7 +4,25 @@ from dataclasses import dataclass
 class bearing:
     ID: float
     OD: float
-    th: float
+    thickness: float
+
+    def __init__(self, ID: float, OD: float, thickness: float | None = None, th: float | None = None):
+        self.ID = ID
+        self.OD = OD
+        if thickness is not None:
+            self.thickness = thickness
+        elif th is not None:
+            self.thickness = th
+        else:
+            raise TypeError("bearing missing required argument: 'thickness'")
+
+    @property
+    def th(self) -> float:
+        return self.thickness
+
+    @th.setter
+    def th(self, val: float):
+        self.thickness = val
 
 @dataclass
 class patterned_hole:
@@ -41,7 +59,7 @@ class cycloid:
     output_holes_N: int
     e: float
     ratio: int
-    cap: cap # disc thickness = cap.flange.thickness + input_bearing.th
+    cap: cap # disc thickness = cap.flange.thickness + input_bearing.thickness
 
 @dataclass
 class base:
@@ -51,10 +69,18 @@ class base:
     roller_holes_R: float # hole r = roller_bearing.ID/2
     roller_holes_N: int
     edge_offset: float # outer edge beyond the roller holes' outer edge (radius sans the mounting tabs)
-    t: float
+    thickness: float
     mounting_holes: patterned_hole # R: hole centers' distance beyond the base radius
     mounting_hole_offset: float # mounting hole is concentric with a ring of material; r_ring - r_hole = mounting_hole_offset. Like a donut
     mounting_hole_fillet_r: float # fillet radius between mounting holes and base
+
+    @property
+    def t(self) -> float:
+        return self.thickness
+
+    @t.setter
+    def t(self, val: float):
+        self.thickness = val
 
 @dataclass
 class top:
@@ -69,22 +95,31 @@ class top:
 
 @dataclass
 class eccentric_insert:
-    input_bearing: bearing # journal r = ID/2, journal height = th
+    input_bearing: bearing # journal r = ID/2, journal height = thickness
     flange: flange # supports the bearing inner race; r = ID/2 + offset
     motor: motor # shaft hole r = shaft_r
     e: float # shaft hole offset from the journal axis
+    journal_height: float | None = None # journal height above flange (defaults to input_bearing.thickness)
 
 @dataclass
 class output:
-    output_bearing: bearing # journal r = ID/2, journal height = th
+    output_bearing: bearing # journal r = ID/2, journal height = thickness
     flange: flange # shoulder supporting the bearing inner race; r = ID/2 + offset
     plate_edge_offset: float # plate edge beyond the needle screw holes' outer edge
-    plate_t: float
+    plate_thickness: float
     output_needle_roller: bearing # pin holes r = ID/2
     output_holes_R: float
     output_holes_N: int
     bore_r: float
     cap: cap # inner-race cap bolted to the journal top
+
+    @property
+    def plate_t(self) -> float:
+        return self.plate_thickness
+
+    @plate_t.setter
+    def plate_t(self, val: float):
+        self.plate_thickness = val
 
 @dataclass
 class bolt:

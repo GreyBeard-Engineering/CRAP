@@ -52,7 +52,7 @@ def make_bolt(b: bolt) -> Part:
 
 
 def make_bearing(b: bearing) -> Part:
-    return bored_cylinder(b.OD / 2, b.ID / 2, b.th)
+    return bored_cylinder(b.OD / 2, b.ID / 2, b.thickness)
 
 
 def spacer_r(b: bearing) -> float:

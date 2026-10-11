@@ -12,7 +12,7 @@ def output_plate_r(o: output) -> float:
 
 
 def output_height(o: output) -> float:
-    return o.plate_t + o.flange.thickness + o.output_bearing.th
+    return o.plate_thickness + o.flange.thickness + o.output_bearing.thickness
 
 
 def _check_output(o: output):
@@ -39,7 +39,7 @@ def make_output(o: output, tol: tolerancing = NOMINAL) -> Part:
     _check_output(o)
     rj = o.output_bearing.ID / 2
     rs = rj + o.flange.offset
-    tp = o.plate_t
+    tp = o.plate_thickness
     ts = tp + o.flange.thickness
     H = output_height(o)
     rjt = rj + tol.delta("output.journal")
@@ -79,11 +79,11 @@ def make_output_step(o: output, path: str = "steps/output.step",
 
 if __name__ == "__main__":
     o = output(
-        output_bearing=bearing(ID=25, OD=37, th=7),               # 6805-ish
+        output_bearing=bearing(ID=25, OD=37, thickness=7),               # 6805-ish
         flange=flange(thickness=3.0, offset=2.0),
         plate_edge_offset=8.5,                                    # 34 mm radius
-        plate_t=4.0,
-        output_needle_roller=bearing(ID=3, OD=6, th=2.5),         # MR63-ish
+        plate_thickness=4.0,
+        output_needle_roller=bearing(ID=3, OD=6, thickness=2.5),         # MR63-ish
         output_holes_R=24.0,
         output_holes_N=6,
         bore_r=6.0,

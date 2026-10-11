@@ -13,11 +13,11 @@ def cycloid_profile(c: cycloid, pts_per_lobe: int = 60, clearance: float = 0.0) 
     offset by the roller radius, so clearance just adds to that offset."""
     roller_r = c.roller_bearing.OD / 2 + clearance
     n = c.ratio + 1  # number of ring rollers
-    th = np.linspace(0, 2 * np.pi, c.ratio * pts_per_lobe, endpoint=False)
-    psi = np.arctan2(np.sin((1 - n) * th),
-                     c.roller_R / (c.e * n) - np.cos((1 - n) * th))
-    x = c.roller_R * np.cos(th) - roller_r * np.cos(th + psi) - c.e * np.cos(n * th)
-    y = -c.roller_R * np.sin(th) + roller_r * np.sin(th + psi) + c.e * np.sin(n * th)
+    theta = np.linspace(0, 2 * np.pi, c.ratio * pts_per_lobe, endpoint=False)
+    psi = np.arctan2(np.sin((1 - n) * theta),
+                     c.roller_R / (c.e * n) - np.cos((1 - n) * theta))
+    x = c.roller_R * np.cos(theta) - roller_r * np.cos(theta + psi) - c.e * np.cos(n * theta)
+    y = -c.roller_R * np.sin(theta) + roller_r * np.sin(theta + psi) + c.e * np.sin(n * theta)
     return np.column_stack([x, y])
 
 
@@ -66,7 +66,7 @@ def cap_screw_hole_gap(c: cycloid) -> float:
 
 
 def cycloid_thickness(c: cycloid) -> float:
-    return c.cap.flange.thickness + c.input_bearing.th
+    return c.cap.flange.thickness + c.input_bearing.thickness
 
 
 def make_cycloid(c: cycloid, tol: tolerancing = NOMINAL) -> Part:
@@ -104,7 +104,7 @@ def make_cycloid(c: cycloid, tol: tolerancing = NOMINAL) -> Part:
         # bearing seat above the flange lip
         with BuildSketch(Plane.XY.offset(tf)):
             Circle(rb)
-        extrude(amount=c.input_bearing.th, mode=Mode.SUBTRACT)
+        extrude(amount=c.input_bearing.thickness, mode=Mode.SUBTRACT)
     return disc.part
 
 
@@ -121,10 +121,10 @@ def make_cycloid_step(c: cycloid, path: str = "steps/cycloid.step",
 
 if __name__ == "__main__":
     c = cycloid(
-        roller_bearing=bearing(ID=2, OD=5, th=2.5),      # MR52-ish
+        roller_bearing=bearing(ID=2, OD=5, thickness=2.5),      # MR52-ish
         roller_R=40.0,
-        input_bearing=bearing(ID=10, OD=19, th=5),        # 6800-ish
-        output_needle_roller=bearing(ID=3, OD=6, th=2.5),  # MR63-ish
+        input_bearing=bearing(ID=10, OD=19, thickness=5),        # 6800-ish
+        output_needle_roller=bearing(ID=3, OD=6, thickness=2.5),  # MR63-ish
         output_holes_R=24.0,
         output_holes_N=6,
         e=1.2,

@@ -10,7 +10,7 @@ def _radii(tp: top):
     rb = tp.output_bearing.OD / 2                         # bearing seat
     ri = rb - tp.cap.flange.offset        # flange lip inner radius
     rw = rb + tp.output_bearing_offset                    # tower outer wall
-    H = tp.cap.flange.thickness + tp.output_bearing.th  # tower height
+    H = tp.cap.flange.thickness + tp.output_bearing.thickness  # tower height
     return rb, ri, rw, H
 
 
@@ -73,10 +73,10 @@ def make_top_step(tp: top, top_path: str = "steps/top.step", cap_path: str = "st
 
 if __name__ == "__main__":
     tp = top(
-        output_bearing=bearing(ID=25, OD=37, th=7),               # 6805-ish
+        output_bearing=bearing(ID=25, OD=37, thickness=7),               # 6805-ish
         output_bearing_offset=6.0,
         base_thickness=4.0,
-        roller_bearing=bearing(ID=2, OD=5, th=2.5),               # matches cycloid
+        roller_bearing=bearing(ID=2, OD=5, thickness=2.5),               # matches cycloid
         roller_holes_R=40.0,
         roller_holes_N=24,
         cap=cap(

@@ -44,6 +44,7 @@ for (const g of ["housing", "input", "cycloid", "output"]) {
   groups[g].matrixAutoUpdate = false;
   cad.add(groups[g]);
 }
+let cycloidStages = [];
 
 function resize() {
   const { clientWidth: w, clientHeight: h } = view;
@@ -88,18 +89,32 @@ function decode(b64, Type) {
 function clearModel() {
   const geoms = new Set();
   for (const g of Object.values(groups)) {
-    for (const child of [...g.children]) {
-      g.remove(child);
-      geoms.add(child.geometry);    // mesh and cap share a geometry
-      if (child.material !== edgeMaterial) child.material?.dispose();
+    g.traverse((child) => {
+      if (child !== g && !child.isGroup) {
+        if (child.geometry) geoms.add(child.geometry);
+        if (child.material && child.material !== edgeMaterial) child.material?.dispose();
+      }
+    });
+    while (g.children.length > 0) {
+      g.remove(g.children[0]);
     }
   }
   for (const geom of geoms) geom?.dispose();
+  cycloidStages = [];
 }
 
 function loadModel(payload) {
   clearModel();
   motion = payload.motion;
+  const numDisks = motion?.num_disks || (payload.instances["cycloid"] ? payload.instances["cycloid"].length : 1);
+  cycloidStages = [];
+  for (let k = 0; k < numDisks; k++) {
+    const stage = new THREE.Group();
+    stage.matrixAutoUpdate = false;
+    groups.cycloid.add(stage);
+    cycloidStages.push(stage);
+  }
+
   // which instances collide (simple builds report collisions)
   const hits = {};
   for (const [a, b] of payload.solver?.collisions ?? []) {
@@ -128,23 +143,53 @@ function loadModel(payload) {
       clippingPlanes: clip,
     });
     const mats = payload.instances[name].map((m) => new THREE.Matrix4().fromArray(m));
-    for (const [m, shadows] of [[mat, true], [capMat, false]]) {
-      const mesh = new THREE.InstancedMesh(geom, m, mats.length);
-      mats.forEach((x, i) => mesh.setMatrixAt(i, x));
-      if (shadows && hits[name]) {             // tint the colliding instances
-        mats.forEach((_, i) => mesh.setColorAt(i, hits[name].has(i) ? TINT : WHITE));
-      }
-      mesh.castShadow = mesh.receiveShadow = shadows;
-      mesh.userData = { name, custom, stock: part.stock };
-      groups[part.group].add(mesh);
-    }
 
-    if (custom && mats.length === 1) {   // crisp CAD-style edges on the custom parts
-      const edges = new THREE.LineSegments(new THREE.EdgesGeometry(geom, 25), edgeMaterial);
-      edges.matrixAutoUpdate = false;
-      edges.matrix.copy(mats[0]);
-      edges.userData = { name, custom };
-      groups[part.group].add(edges);
+    if (part.group === "cycloid" && cycloidStages.length > 0) {
+      const perStage = Math.max(1, Math.floor(mats.length / cycloidStages.length));
+      for (let k = 0; k < cycloidStages.length; k++) {
+        const stageMats = mats.slice(k * perStage, (k + 1) * perStage);
+        if (stageMats.length === 0) continue;
+        for (const [m, shadows] of [[mat, true], [capMat, false]]) {
+          const mesh = new THREE.InstancedMesh(geom, m, stageMats.length);
+          stageMats.forEach((x, i) => {
+            mesh.setMatrixAt(i, x);
+            const globalIdx = k * perStage + i;
+            if (shadows && hits[name]) {
+              mesh.setColorAt(i, hits[name].has(globalIdx) ? TINT : WHITE);
+            }
+          });
+          mesh.castShadow = mesh.receiveShadow = shadows;
+          mesh.userData = { name, custom, stock: part.stock };
+          cycloidStages[k].add(mesh);
+        }
+
+        if (custom && stageMats.length === 1) {
+          const edges = new THREE.LineSegments(new THREE.EdgesGeometry(geom, 25), edgeMaterial);
+          edges.matrixAutoUpdate = false;
+          edges.matrix.copy(stageMats[0]);
+          edges.userData = { name, custom };
+          cycloidStages[k].add(edges);
+        }
+      }
+    } else {
+      for (const [m, shadows] of [[mat, true], [capMat, false]]) {
+        const mesh = new THREE.InstancedMesh(geom, m, mats.length);
+        mats.forEach((x, i) => mesh.setMatrixAt(i, x));
+        if (shadows && hits[name]) {             // tint the colliding instances
+          mats.forEach((_, i) => mesh.setColorAt(i, hits[name].has(i) ? TINT : WHITE));
+        }
+        mesh.castShadow = mesh.receiveShadow = shadows;
+        mesh.userData = { name, custom, stock: part.stock };
+        groups[part.group].add(mesh);
+      }
+
+      if (custom && mats.length === 1) {   // crisp CAD-style edges on the custom parts
+        const edges = new THREE.LineSegments(new THREE.EdgesGeometry(geom, 25), edgeMaterial);
+        edges.matrixAutoUpdate = false;
+        edges.matrix.copy(mats[0]);
+        edges.userData = { name, custom };
+        groups[part.group].add(edges);
+      }
     }
   }
   // the overlapping volumes themselves, drawn on top so they can't hide inside the parts
@@ -220,10 +265,12 @@ function applyVisibility() {
   const show = { screw: document.getElementById("show-screws").checked,
                  bearing: document.getElementById("show-bearings").checked };
   for (const g of Object.values(groups)) {
-    for (const c of g.children) {
-      const { name, custom, stock } = c.userData;
-      c.visible = custom ? !hiddenParts.has(name) : show[stock];
-    }
+    g.traverse((c) => {
+      if (c.userData && c.userData.name) {
+        const { name, custom, stock } = c.userData;
+        c.visible = custom ? !hiddenParts.has(name) : show[stock];
+      }
+    });
   }
   for (const chip of partsBar.querySelectorAll("[data-part]")) {
     const on = !hiddenParts.has(chip.dataset.part);
@@ -294,11 +341,18 @@ function updateMotion() {
   const out = -theta / ratio;   // output (and cycloid spin) turns the opposite way, 1/ratio as fast
   groups.input.matrix.makeRotationZ(theta);
   groups.output.matrix.makeRotationZ(out);
-  // cycloid: undo the baked-in +e·X offset, spin about its own center, re-center on the orbit
-  groups.cycloid.matrix
-    .makeTranslation(e * Math.cos(theta), e * Math.sin(theta), 0)
-    .multiply(m1.makeRotationZ(out))
-    .multiply(m2.makeTranslation(-motion.cycloid_center[0], -motion.cycloid_center[1], 0));
+  const numStages = cycloidStages.length || 1;
+  for (let k = 0; k < cycloidStages.length; k++) {
+    const phi = (k * 2 * Math.PI) / numStages;
+    const cx = e * Math.cos(phi);
+    const cy = e * Math.sin(phi);
+    cycloidStages[k].matrix
+      .makeTranslation(e * Math.cos(theta + phi), e * Math.sin(theta + phi), 0)
+      .multiply(m1.makeRotationZ(out))
+      .multiply(m2.makeTranslation(-cx, -cy, 0));
+    cycloidStages[k].matrixWorldNeedsUpdate = true;
+  }
+  groups.cycloid.matrix.identity();
   for (const g of Object.values(groups)) g.matrixWorldNeedsUpdate = true;
   collisionGroup.visible = theta === 0;     // the overlaps are only right in the assembled pose
 
