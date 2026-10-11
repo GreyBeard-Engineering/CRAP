@@ -1,5 +1,6 @@
 from build123d import *
 from part_generation_fcns.classdefs import *
+from part_generation_fcns.envelope import Envelope, cyl, pattern_voids
 from part_generation_fcns.errors import GeometryError, geometry_issue
 from part_generation_fcns.paths import ensure_parent
 from part_generation_fcns.tolerancing import NOMINAL, tolerancing
@@ -59,6 +60,16 @@ def make_top(tp: top, tol: tolerancing = NOMINAL) -> Part:
                 Circle(tp.cap.bearing_retainer_holes.r + tol.delta("top.retainer_holes"))
         extrude(amount=H, mode=Mode.SUBTRACT)
     return part.part
+
+
+def envelope_top(tp: top) -> Envelope:
+    """The revolved profile as three rings (lip, tower wall, base plate) plus its holes."""
+    rb, ri, rw, H = _radii(tp)
+    tf, tb = tp.cap.flange.thickness, tp.base_thickness
+    return Envelope(
+        cyls=[cyl(rb, 0, tf, r_in=ri), cyl(rw, 0, H, r_in=rb), cyl(top_outer_r(tp), 0, tb, r_in=rw)],
+        voids=pattern_voids(patterned_hole(r=tp.roller_bearing.ID / 2, R=tp.roller_holes_R, N=tp.roller_holes_N), 0, tb)
+              + pattern_voids(tp.cap.bearing_retainer_holes, 0, H))
 
 
 def make_top_step(tp: top, top_path: str = "steps/top.step", cap_path: str = "steps/top_cap.step") -> tuple[Part, Part]:

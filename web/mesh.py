@@ -3,6 +3,7 @@ import base64
 import numpy as np
 from build123d import Location, Part
 from part_generation_fcns.base_step import base_mounting_holes
+from part_generation_fcns.envelope import poser
 from part_generation_fcns.gearbox import gearbox
 
 # main custom parts get their own color; everything else is keyed by name
@@ -41,15 +42,30 @@ def tessellate(part: Part, tol: float = 0.05) -> dict:
     return {"verts": _b64(v), "tris": _b64(t), "n_verts": len(v), "n_tris": len(t)}
 
 
-def collision_meshes(gb: gearbox, collisions, limit: int = 80) -> list[dict]:
-    """The overlapping volume of each colliding pair, tessellated in assembly coordinates."""
-    placed = {p.label: p for p in gb.assembly().children}
+def _part_name(label: str, names) -> str:
+    return label if label in names else label.rsplit("_", 1)[0]
+
+
+def collision_meshes(gb: gearbox, collisions, limit: int = 12) -> list[dict]:
+    """The overlapping volume of the worst collision of each kind of part pair, tessellated in
+    assembly coordinates with the input turned to its angle. These are exact booleans, so
+    they're only drawn for a few representative hits."""
+    posed, names, seen = poser(gb), set(gb.parts), set()
     out = []
-    for a, b, v in collisions[:limit]:
-        common = placed[a] & placed[b]
-        if common is None:
+    for a, b, depth, theta in collisions:      # worst first
+        kind = tuple(sorted((_part_name(a, names), _part_name(b, names))))
+        if kind in seen:
             continue
-        out.append({"a": a, "b": b, "volume": round(v, 3), **tessellate(common, 0.02)})
+        seen.add(kind)
+        if len(seen) > limit:
+            break
+        try:
+            common = posed(a, theta) & posed(b, theta)
+        except Exception:
+            common = None
+        if common is None or common.volume <= 0:
+            continue
+        out.append({"a": a, "b": b, "depth": depth, "theta": theta, **tessellate(common, 0.02)})
     return out
 
 

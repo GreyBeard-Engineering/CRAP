@@ -4,13 +4,16 @@ import os
 from build123d import Compound, Location, Part, export_step, export_stl
 from part_generation_fcns.classdefs import *
 from part_generation_fcns.errors import collecting_issues, geometry_issue
-from part_generation_fcns.base_step import make_base
-from part_generation_fcns.top_step import make_top, _radii as top_radii
-from part_generation_fcns.cycloid_step import cycloid_thickness, make_cycloid, make_cycloid_cap
-from part_generation_fcns.eccentric_insert_step import make_eccentric_insert
-from part_generation_fcns.output_step import make_output, output_height, output_plate_r
-from part_generation_fcns.cap_step import cap_radii, make_cap
-from part_generation_fcns.hardware import bolt_name, bored_cylinder, make_bearing, make_bolt, make_spacer, socket_head_bolt
+from part_generation_fcns.base_step import envelope_base, make_base
+from part_generation_fcns.top_step import envelope_top, make_top, _radii as top_radii
+from part_generation_fcns.cycloid_step import (cycloid_thickness, envelope_cycloid, envelope_cycloid_cap,
+                                               make_cycloid, make_cycloid_cap)
+from part_generation_fcns.eccentric_insert_step import envelope_eccentric_insert, make_eccentric_insert
+from part_generation_fcns.output_step import envelope_output, make_output, output_height, output_plate_r
+from part_generation_fcns.cap_step import cap_radii, envelope_cap, make_cap
+from part_generation_fcns.hardware import (bolt_name, bored_cylinder, envelope_bearing, envelope_bolt,
+                                           envelope_bored_cylinder, envelope_spacer, make_bearing, make_bolt,
+                                           make_spacer, socket_head_bolt)
 from part_generation_fcns.tolerancing import NOMINAL, tolerancing
 
 
@@ -239,6 +242,7 @@ class gearbox:
         c, tp, o = self.cycloid, self.top, self.output
         N = self.num_disks
         L = {}
+        E = {}      # name -> Envelope, for the fast clearance check
 
         z_cycloids = z["cycloids"]
         z_caps = z["cycloid_caps"]
@@ -246,9 +250,11 @@ class gearbox:
 
         # custom parts
         L["base"] = (self._try(lambda: make_base(self.base, tol), "base"), [Location((0, 0, z["base"]))])
+        E["base"] = envelope_base(self.base)
         # insert's shaft hole is at local +e; turn it 180 deg so the hole lands on the motor axis
         L["eccentric_insert"] = (self._try(lambda: make_eccentric_insert(self.eccentric_insert, tol), "eccentric_insert"),
                                  [Location((e, 0, z["eccentric_insert"]), (0, 0, 180))])
+        E["eccentric_insert"] = envelope_eccentric_insert(self.eccentric_insert)
         if N > 1:
             locs_stacked = []
             for k in range(1, N):
@@ -260,6 +266,7 @@ class gearbox:
                 self._try(lambda: make_eccentric_insert(self.eccentric_insert_stacked, tol), "eccentric_insert_stacked"),
                 locs_stacked
             )
+            E["eccentric_insert_stacked"] = envelope_eccentric_insert(self.eccentric_insert_stacked)
 
             r_sp_inner = self.base.drive_motor.shaft_r
             r_sp_outer = c.input_bearing.ID / 2 - e
@@ -270,6 +277,7 @@ class gearbox:
                 self._try(lambda: bored_cylinder(r_sp_outer, r_sp_inner, h_sp_1), "inter_eccentric_spacer"),
                 [Location((0, 0, z_caps[0]))]
             )
+            E["inter_eccentric_spacer"] = envelope_bored_cylinder(r_sp_outer, r_sp_inner, h_sp_1)
             if N > 2:
                 h_sp_k = self.inter_disk_spacing
                 locs_sp_k = [Location((0, 0, z_caps[k - 1] + c.cap.flange.thickness)) for k in range(2, N)]
@@ -277,6 +285,7 @@ class gearbox:
                     self._try(lambda: bored_cylinder(r_sp_outer, r_sp_inner, h_sp_k), "inter_eccentric_spacer_upper"),
                     locs_sp_k
                 )
+                E["inter_eccentric_spacer_upper"] = envelope_bored_cylinder(r_sp_outer, r_sp_inner, h_sp_k)
 
         locs_cycloid = []
         locs_cap = []
@@ -293,14 +302,19 @@ class gearbox:
         L["cycloid"] = (self._try(lambda: make_cycloid(c, tol), "cycloid"), locs_cycloid)
         L["cycloid_cap"] = (self._try(lambda: make_cycloid_cap(c, tol), "cycloid_cap"), locs_cap)
         L["input_bearing"] = (self._try(lambda: make_bearing(c.input_bearing), "input_bearing"), locs_ib)
+        E["cycloid"], E["cycloid_cap"] = envelope_cycloid(c), envelope_cycloid_cap(c)
+        E["input_bearing"] = envelope_bearing(c.input_bearing)
 
         L["output"] = (self._try(lambda: make_output(o, tol), "output"), [Location((0, 0, z["output"]))])
         L["output_cap"] = (self._try(lambda: make_cap(o.cap, o.output_bearing, race="inner", hole_delta=tol.delta("output_cap.holes")), "output_cap"), [Location((0, 0, z["output_cap"]))])
         L["top"] = (self._try(lambda: make_top(tp, tol), "top"), [Location((0, 0, z["top"]))])
         L["top_cap"] = (self._try(lambda: make_cap(tp.cap, tp.output_bearing, hole_delta=tol.delta("top_cap.holes")), "top_cap"), [Location((0, 0, z["top_cap"]))])
+        E["output"], E["output_cap"] = envelope_output(o), envelope_cap(o.cap, o.output_bearing, race="inner")
+        E["top"], E["top_cap"] = envelope_top(tp), envelope_cap(tp.cap, tp.output_bearing)
 
         L["output_bearing"] = (self._try(lambda: make_bearing(tp.output_bearing), "output_bearing"),
                                [Location((0, 0, z["top"] + tp.cap.flange.thickness))])
+        E["output_bearing"] = envelope_bearing(tp.output_bearing)
 
         # ring rollers: midplane on each cycloid midplane, spacers down to the base and up to
         # the top, with inter-roller spacers between adjacent discs
@@ -314,6 +328,8 @@ class gearbox:
             z_rb_k = z_mids[k] - rb.thickness / 2
             locs_rb.extend([Location((x, y, z_rb_k)) for x, y in ring])
         L["roller_bearing"] = (self._try(lambda: make_bearing(rb), "roller_bearing"), locs_rb)
+        E["roller_bearing"] = envelope_bearing(rb)
+        E["roller_spacer_bottom"] = envelope_spacer(rb, z_rb0 - self.base.thickness)
 
         L["roller_spacer_bottom"] = (
             self._try(lambda: make_spacer(rb, z_rb0 - self.base.thickness, tol.delta("roller_spacer.bore")), "roller_spacer_bottom"),
@@ -330,11 +346,13 @@ class gearbox:
                 self._try(lambda: make_spacer(rb, h_inter, tol.delta("roller_spacer.bore")), "inter_roller_spacer"),
                 locs_inter_spacer
             )
+            E["inter_roller_spacer"] = envelope_spacer(rb, h_inter)
 
         L["roller_spacer_top"] = (
             self._try(lambda: make_spacer(rb, z["top"] - z_rb_last, tol.delta("roller_spacer.bore")), "roller_spacer_top"),
             [Location((x, y, z_rb_last)) for x, y in ring]
         )
+        E["roller_spacer_top"] = envelope_spacer(rb, z["top"] - z_rb_last)
 
         z_ring_head = z["top"] + tp.base_thickness
         ring_bolt = socket_head_bolt(rb.ID, z_ring_head - z["base"])
@@ -342,6 +360,7 @@ class gearbox:
             self._try(lambda: make_bolt(ring_bolt), f"ring_bolt_{bolt_name(ring_bolt)}"),
             [Location((x, y, z_ring_head)) for x, y in ring]
         )
+        E[f"ring_bolt_{bolt_name(ring_bolt)}"] = envelope_bolt(ring_bolt)
 
         # output needles: roller midplane on each cycloid midplane, spacer up to the output
         # plate; a screw goes in from below, head under the roller, and threads into the plate
@@ -355,6 +374,7 @@ class gearbox:
             z_nr_k = z_mids[k] - nr.thickness / 2
             locs_nr.extend([Location((x, y, z_nr_k)) for x, y in pins])
         L["needle_roller"] = (self._try(lambda: make_bearing(nr), "needle_roller"), locs_nr)
+        E["needle_roller"] = envelope_bearing(nr)
 
         if N > 1:
             h_nr_inter = (z_mids[1] - z_mids[0]) - nr.thickness
@@ -366,17 +386,20 @@ class gearbox:
                 self._try(lambda: make_spacer(nr, h_nr_inter, tol.delta("needle_spacer.bore")), "inter_needle_spacer"),
                 locs_nr_inter
             )
+            E["inter_needle_spacer"] = envelope_spacer(nr, h_nr_inter)
 
         L["needle_spacer"] = (
             self._try(lambda: make_spacer(nr, z["output"] - z_nr_last, tol.delta("needle_spacer.bore")), "needle_spacer"),
             [Location((x, y, z_nr_last)) for x, y in pins]
         )
+        E["needle_spacer"] = envelope_spacer(nr, z["output"] - z_nr_last)
         needle_bolt = socket_head_bolt(nr.ID, z["output"] + o.plate_thickness - z_nr0)
         # flipped: head below the roller, shank pointing up
         L[f"needle_bolt_{bolt_name(needle_bolt)}"] = (
             self._try(lambda: make_bolt(needle_bolt), f"needle_bolt_{bolt_name(needle_bolt)}"),
             [Location((x, y, z_nr0), (180, 0, 0)) for x, y in pins]
         )
+        E[f"needle_bolt_{bolt_name(needle_bolt)}"] = envelope_bolt(needle_bolt)
 
         # cap screws: head on the cap, engaging the part below by the bearing thickness
         rh = c.cap.bearing_retainer_holes
@@ -395,6 +418,7 @@ class gearbox:
             self._try(lambda: make_bolt(bt), f"cycloid_cap_bolt_{bolt_name(bt)}"),
             locs_cap_bolts
         )
+        E[f"cycloid_cap_bolt_{bolt_name(bt)}"] = envelope_bolt(bt)
 
         for name, cp, b in (("output_cap", o.cap, o.output_bearing),
                             ("top_cap", tp.cap, tp.output_bearing)):
@@ -403,10 +427,13 @@ class gearbox:
             z_head = z[name] + cp.flange.thickness
             L[f"{name}_bolt_{bolt_name(bt)}"] = (self._try(lambda: make_bolt(bt), f"{name}_bolt_{bolt_name(bt)}"),
                 [Location((x, y, z_head)) for x, y, _ in _polar(rh.R, rh.N, rh.start_angle)])
+            E[f"{name}_bolt_{bolt_name(bt)}"] = envelope_bolt(bt)
 
         L = {name: v for name, v in L.items() if v[0] is not None}   # lenient: skip unbuildable parts
         for name, (part, _) in L.items():
             part.label = name
+        if tol is NOMINAL:
+            self._envelopes = {name: E[name] for name in L}
         return L
 
     def _try(self, build, name: str):
@@ -422,6 +449,10 @@ class gearbox:
     def build(self) -> dict[str, Part]:
         """Every unique part (nominal) at its own origin; returns {name: Part}."""
         return {name: part for name, (part, _) in self._layout_cache.items()}
+
+    def envelopes(self) -> dict:
+        """Simple cylinder / prism envelope of every unique part (see envelope.py)."""
+        return self._envelopes
 
     def locations(self) -> dict[str, list[Location]]:
         """Assembled location of every instance of each part."""
@@ -471,10 +502,19 @@ class gearbox:
             out[name] = self._MOTION_GROUPS[max(keys, key=len)]
         return out
 
-    def collisions(self, min_volume: float = 1e-3, parallel: bool = True) -> list[tuple[str, str, float]]:
-        """Exact solid-solid overlaps in the nominal assembly: [(label_a, label_b, volume)].
-        Touching faces (zero-volume contact) don't count. Pairs whose bounding boxes overlap
-        are intersected exactly, spread over a pool of worker processes when parallel."""
+    def collisions(self, mode: str = "fast", angles: int = 360, min_volume: float = 1e-3,
+                   parallel: bool = True) -> list[tuple[str, str, float, float]]:
+        """Colliding instances: [(label_a, label_b, size, theta_deg)].
+
+        mode="fast": the part envelopes (cylinders, plus the cycloid's outline) checked over one
+        input turn in `angles` steps; size is the penetration depth (mm) at the worst angle.
+        mode="exact": exact solid booleans in the assembled pose (theta 0); size is the overlap
+        volume (mm^3). Slow, so it's for tests and checking the envelopes themselves."""
+        if mode == "fast":
+            from part_generation_fcns.envelope import clearance
+            return clearance(self, angles)
+        if mode != "exact":
+            raise ValueError(f"mode must be 'fast' or 'exact', got {mode!r}")
         placed = list(self.assembly().children)
         boxes = [p.bounding_box() for p in placed]
         pairs = []
@@ -495,7 +535,7 @@ class gearbox:
                 _POOL = None
         if results is None:
             results = [(i, j, _overlap(placed[i], placed[j])) for i, j in pairs]
-        return [(placed[i].label, placed[j].label, v) for i, j, v in results if v > min_volume]
+        return [(placed[i].label, placed[j].label, v, 0.0) for i, j, v in results if v > min_volume]
 
     def assembly(self, layout: dict | None = None) -> Compound:
         children = []
@@ -565,17 +605,7 @@ _POOL = None
 
 def _overlap(a, b) -> float:
     common = a & b
-    if common is None or common.volume <= 0:
-        return 0.0
-    # In rare cases with periodic B-spline tangent contact, OpenCASCADE BOP produces
-    # a false common volume whose center of mass is outside the intersecting solids.
-    try:
-        c = common.center()
-        if not (a.is_inside(c) or b.is_inside(c)):
-            return 0.0
-    except Exception:
-        pass
-    return common.volume
+    return 0.0 if common is None else common.volume
 
 
 def _overlap_chunk(args) -> list[tuple[int, int, float]]:

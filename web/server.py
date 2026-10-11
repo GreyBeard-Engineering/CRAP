@@ -5,6 +5,7 @@ import io
 import json
 import tempfile
 import threading
+import time
 import typing
 import zipfile
 from pathlib import Path
@@ -129,8 +130,14 @@ def _build(body: dict, kwargs: dict) -> dict:
             gb = gearbox(**kwargs, assembly_path=None, strict=False)
             for code, msg in gb.issues:
                 print(f"[build] issue {code}: {msg}", flush=True)
-            return {**gearbox_payload(gb), "issues": [m for _, m in gb.issues], "collision_meshes": [],
-                    "valid": not _failed_parts(gb), "failed_parts": _failed_parts(gb)}
+            t0 = time.time()
+            hits = gb.collisions()
+            report = {"ok": not hits, "problems": [], "iterations": 0, "log": [],
+                      "check_seconds": round(time.time() - t0, 1),
+                      "collisions": [[a, b, round(d, 3), th] for a, b, d, th in hits]}
+            return {**gearbox_payload(gb), "issues": [m for _, m in gb.issues], "solver": report,
+                    "collision_meshes": collision_meshes(gb, hits),
+                    "valid": not hits and not _failed_parts(gb), "failed_parts": _failed_parts(gb)}
         if not res.ok:      # the GUI only lists colliding parts; the details go to the log
             for msg in res.problems:
                 print(f"[solver] problem: {msg}", flush=True)
@@ -204,7 +211,7 @@ def _failed_parts(gb) -> list[str]:
 def _solver_report(res) -> dict:
     return {"ok": res.ok, "problems": res.problems, "iterations": res.iterations, "log": res.log,
             "check_seconds": round(res.check_seconds, 1),
-            "collisions": [[a, b, round(v, 3)] for a, b, v in res.collisions]}
+            "collisions": [[a, b, round(d, 3), th] for a, b, d, th in res.collisions]}
 
 
 def _export_zip(body: dict, kwargs: dict, tol: tolerancing, fmt: str, scope: str) -> bytes:
@@ -216,6 +223,9 @@ def _export_zip(body: dict, kwargs: dict, tol: tolerancing, fmt: str, scope: str
         gb = gearbox(**kwargs, assembly_path=None, strict=False)
         if _failed_parts(gb):
             raise ValueError("; ".join(_failed_parts(gb)))
+        if res is None and gb.collisions():
+            raise ValueError("parts in this design collide; fix them (or revert to the last valid "
+                             "design) before exporting")
         with tempfile.TemporaryDirectory() as d:
             paths = gb.export(d, tol, fmt, scope)
             buf = io.BytesIO()

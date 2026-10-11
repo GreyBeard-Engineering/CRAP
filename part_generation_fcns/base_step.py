@@ -1,6 +1,7 @@
 import numpy as np
 from build123d import *
 from part_generation_fcns.classdefs import *
+from part_generation_fcns.envelope import Envelope, cyl, pattern_voids, void
 from part_generation_fcns.errors import GeometryError, geometry_issue
 from part_generation_fcns.paths import ensure_parent
 from part_generation_fcns.tolerancing import NOMINAL, tolerancing
@@ -72,6 +73,24 @@ def make_base(b: base, tol: tolerancing = NOMINAL) -> Part:
                 Circle(b.mounting_holes.r + tol.delta("base.mounting_holes"), mode=Mode.SUBTRACT)
         extrude(amount=b.thickness)
     return part.part
+
+
+def envelope_base(b: base) -> Envelope:
+    """Disc, tab strips and tab rings, with every hole as a void (the tab fillets are ignored)."""
+    t = b.thickness
+    ring_r = b.mounting_holes.r + b.mounting_hole_offset
+    mh = base_mounting_holes(b)
+    env = Envelope(cyls=[cyl(base_outer_r(b), 0, t)])
+    for k in range(mh.N):
+        a = np.radians(mh.start_angle + 360 * k / mh.N)
+        u, v = np.array([np.cos(a), np.sin(a)]), np.array([-np.sin(a), np.cos(a)])
+        env.prisms.append((np.array([ring_r * v, mh.R * u + ring_r * v, mh.R * u - ring_r * v, -ring_r * v]), 0, t))
+        env.cyls.append(cyl(ring_r, 0, t, x=mh.R * u[0], y=mh.R * u[1]))
+    env.voids = ([void(b.drive_motor.shaft_r + b.shaft_hole_offset, 0, t)]
+                 + pattern_voids(b.drive_motor.mounting_holes, 0, t)
+                 + pattern_voids(patterned_hole(r=b.roller_bearing.ID / 2, R=b.roller_holes_R, N=b.roller_holes_N), 0, t)
+                 + pattern_voids(mh, 0, t))
+    return env
 
 
 def make_base_step(b: base, path: str = "steps/base.step") -> Part:

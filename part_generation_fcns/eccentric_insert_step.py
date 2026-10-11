@@ -1,5 +1,6 @@
 from build123d import *
 from part_generation_fcns.classdefs import *
+from part_generation_fcns.envelope import Envelope, cyl, void
 from part_generation_fcns.errors import GeometryError, geometry_issue
 from part_generation_fcns.paths import ensure_parent
 from part_generation_fcns.tolerancing import NOMINAL, tolerancing
@@ -39,6 +40,13 @@ def make_eccentric_insert(ei: eccentric_insert, tol: tolerancing = NOMINAL) -> P
                 Circle(ei.motor.shaft_r + tol.delta("eccentric_insert.shaft_hole"))
         extrude(amount=H, mode=Mode.SUBTRACT)
     return part.part
+
+
+def envelope_eccentric_insert(ei: eccentric_insert) -> Envelope:
+    rj = ei.input_bearing.ID / 2
+    tf, H = ei.flange.thickness, eccentric_insert_thickness(ei)
+    return Envelope(cyls=[cyl(rj + ei.flange.offset, 0, tf), cyl(rj, tf, H)],
+                    voids=[void(ei.motor.shaft_r, 0, H, x=ei.e)])
 
 
 def make_eccentric_insert_step(ei: eccentric_insert, path: str = "steps/eccentric_insert.step") -> Part:

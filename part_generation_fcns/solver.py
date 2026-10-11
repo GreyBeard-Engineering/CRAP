@@ -375,10 +375,10 @@ def _solve(spec, rules, max_iter, check_collisions, progress, adj) -> SolveResul
         if not hits:
             return SolveResult(kwargs, gb, log, it, [], dt)
         fixes = {}
-        for a, b, v in hits:
+        for a, b, v, _ in hits:
             f = _collision_fix(a, b)
             if f is None:
-                pairs = ", ".join(f"{a} x {b} ({v:.2f} mm^3)" for a, b, v in hits[:6])
+                pairs = ", ".join(f"{a} x {b} ({v:.2f} mm deep at {th:g} deg)" for a, b, v, th in hits[:6])
                 raise SolveError(f"parts collide and no rule fixes it: {pairs}", log)
             fixes[f[0]] = f[1]
         for key, msg in fixes.items():

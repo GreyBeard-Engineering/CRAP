@@ -2,7 +2,7 @@
 
 A parametric generator for **cycloidal reducers**. You describe the gearbox (bearings, motor, ratio, eccentricity and roller radius) and CRAP builds every part as solid CAD with [build123d](https://github.com/gumyr/build123d). The parts are made to be machined on a 2.5-axis mill or 3D printed. CRAP:
 
-- assembles them, checks them for collisions, animates the mechanism in a browser, and
+- assembles them, checks them for collisions through a full turn of the input, animates the mechanism in a browser, and
 - exports toleranced STEP or STL files, ready to make.
 
 Everything is in millimetres.
@@ -20,12 +20,12 @@ The GUI opens at <http://127.0.0.1:8000>.
 ## The GUI
 
 **Left panel: Manual Configuration**
-- **Simple mode:** you enter the bearings, the motor (with a *face mount* option), the ratio, the eccentricity and the roller radius. A solver derives every other dimension, including the plate gaps (hidden in this mode), and adjusts until the design builds. It finishes with an exact 3D collision check, spread across CPU cores (a few seconds; longer for many rollers).
+- **Simple mode:** you enter the bearings, the motor (with a *face mount* option), the ratio, the eccentricity and the roller radius. A solver derives every other dimension, including the plate gaps (hidden in this mode), and adjusts until the design builds. Each attempt gets the fast clearance check (below).
 - **Advanced mode:** every dimension is editable. Switching from Simple to Advanced pre-fills the solver's choices.
 - **Key Parameters** (e, roller R, ratio) are always visible; **Plate Spacing** only in Advanced.
 - **Tabs:** Bearings, Motor, and (Advanced only) Parts, with a sub-tab per custom part.
 - **Rebuild:** turns orange when the form no longer matches the model on screen. Enter also rebuilds.
-- **A design is good to go when nothing collides.** If the solver can't find a clean design, it still builds its best attempt. Colliding parts are tinted, the overlap volumes are drawn in red, and the colliding part pairs are listed. **Revert to last valid design** restores the last clean build. Detailed solver messages go to the server log.
+- **A design is good to go when nothing collides**, checked in both modes over a full turn of the input. If the solver can't find a clean design, it still builds its best attempt. Colliding parts are tinted, and the colliding part pairs are listed with how deep they overlap and at what input angle; click one to turn the model to that angle, where the overlap is drawn in red. **Revert to last valid design** restores the last clean build. Detailed solver messages go to the server log.
 
 **Left panel: Export**
 - STEP (individual parts plus the assembled gearbox) or STL.
@@ -55,7 +55,8 @@ from part_generation_fcns.tolerancing import tolerancing, DEFAULT_MAGNITUDES
 
 gb = gearbox(**EXAMPLE_KWARGS)            # build every part; writes steps/gearbox/gearbox.step
 gb.generate("steps/gearbox")              # one STEP per part
-print(gb.collisions())                    # exact solid-solid overlaps, [] when clean
+print(gb.collisions())                    # fast check over a full turn: [(a, b, depth_mm, angle_deg)], [] when clean
+print(gb.collisions(mode="exact"))        # exact OCC booleans in the assembled pose (slow)
 
 res = solve(spec_from_kwargs(EXAMPLE_KWARGS))   # Simple mode from Python
 res.gearbox.export("out", tolerancing(enabled=True, **DEFAULT_MAGNITUDES), fmt="stl", scope="custom")
@@ -71,10 +72,11 @@ res.gearbox.export("out", tolerancing(enabled=True, **DEFAULT_MAGNITUDES), fmt="
 | `part_generation_fcns/hardware.py` | bearings, spacers and ISO 4762 socket-head screws |
 | `part_generation_fcns/tolerancing.py` | export-time fits |
 | `part_generation_fcns/solver.py` | Simple-mode derivation rules and the iterate-until-it-builds solver |
+| `part_generation_fcns/envelope.py` | the fast clearance check: cylinder / outline envelopes, posed through a full input turn |
 | `part_generation_fcns/errors.py` | coded geometry errors the solver reacts to (raised when strict; recorded when building a best-effort design) |
 | `web/` | FastAPI server (`server.py`), mesh payload (`mesh.py`) and the three.js front end (`static/`) |
 | `steps/` | generated STEP files (`steps/gearbox/` holds the full assembly) |
-| `test_cycloid.py`, `test_solver.py` | checks; `python test_solver.py --full` runs the exact collision check on every case in the sweep |
+| `test_cycloid.py`, `test_solver.py`, `test_envelope.py` | checks; `test_envelope.py` keeps the envelopes honest against the CAD and the exact check; `python test_solver.py --full` also runs the exact check on every solved case |
 
 ## Design notes
 
@@ -96,13 +98,18 @@ res.gearbox.export("out", tolerancing(enabled=True, **DEFAULT_MAGNITUDES), fmt="
 - **Cycloid cap:** a small ring around the input bearing. Its outer radius is its screw circle + ¼ of the screw-hole radius, so the screws notch its edge, with ¼-screw-radius fillets on the notch corners.
 - **Output holes** go as far out as the walls allow, which gives the largest moment arm and so the lowest pin forces. The output plate is sized to clear the ring rollers.
 - **Eccentric insert:** the motor shaft, offset by e, keeps at least 1 mm of insert wall inside the input bearing's bore.
+- **Fast clearance check:** every part has an *envelope* written next to its generator: Z-aligned cylinders and rings, with its holes as voids. Only the cycloid isn't round, so its outline and the edges of its holes are points instead.
+  - Cylinder pairs are compared exactly (centre distance against radii). The cycloid's points are tested against the other parts' cylinders, plus one interior point of each cylinder against the cycloid (for one buried inside it).
+  - Every rigid body (housing, input, output, each disc) is posed like the animation, at 360 input angles. One input turn is a full period: the disc turns one lobe per turn.
+  - Touching (a screw in a tight hole, a roller on the profile) is allowed; depth is the smaller of the radial and axial overlap.
+  - It takes about 0.2 s for one disc, against 5–8 s for the exact check in one pose. Fillets aren't in the envelopes; `test_envelope.py` checks each envelope against its CAD (≤ 1% disagreement) and the fast check against the exact one.
 - **Cycloid validity:** a cycloid that would cusp (roller R ≤ e·(ratio+1)) or **undercut** (the roller is larger than the profile's tightest curve) is flagged.
 
 ### Known limitations
 
 - Screw lengths come straight from the stack and aren't rounded to stock lengths.
 - An M3 needle-screw head is almost as wide as a 6 mm needle roller, so it rubs the roller's outer race. A washer would fix this.
-- Simple-mode builds wait on the exact collision check: a few seconds for typical designs, 20–30 s with about 50 roller stacks.
+- The fast check samples the motion every 1°, so a collision that comes and goes between samples could be missed. Clearances that small are well under printing tolerances.
 - In Simple mode, the cycloid cap's screws sit on a plain ring, so the output holes have to clear their heads radially. That sets the floor on compactness. Placing the screws between the output holes would allow smaller designs.
 - Python changes take effect only after the server restarts (close and reopen `launch_gui.bat`).
 
@@ -139,6 +146,6 @@ CRAP was built in a long back-and-forth between **Dash** and **Claude** (Anthrop
 - Did the verification work:
   - the collision checks, which found and fixed the cap-screw/output-plate overlap;
   - the cycloid **undercut** check, after the solver sweep turned up broken profiles;
-  - the parallel collision check (about 3× faster);
+  - the parallel collision check (about 3× faster), then the envelope-based clearance check (Dash's idea: fit the parts with cylinders, test the cycloid's outline as points);
   - the edge-case and compact-design build campaigns, the solver sweep tests and browser testing.
 - Wrote this README.

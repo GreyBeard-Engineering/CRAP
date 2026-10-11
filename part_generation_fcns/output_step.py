@@ -1,5 +1,6 @@
 from build123d import *
 from part_generation_fcns.classdefs import *
+from part_generation_fcns.envelope import Envelope, cyl, pattern_voids, void
 from part_generation_fcns.errors import GeometryError, geometry_issue
 from part_generation_fcns.paths import ensure_parent
 from part_generation_fcns.cap_step import cap_radii, check_cap, make_cap
@@ -64,6 +65,20 @@ def make_output(o: output, tol: tolerancing = NOMINAL) -> Part:
                 Circle(o.cap.bearing_retainer_holes.r + tol.delta("output.retainer_holes"))
         extrude(amount=H, mode=Mode.SUBTRACT)
     return part.part
+
+
+def envelope_output(o: output) -> Envelope:
+    """Plate, shoulder and journal, with the bore, needle-screw and cap-screw holes as voids."""
+    rj = o.output_bearing.ID / 2
+    tp = o.plate_thickness
+    ts = tp + o.flange.thickness
+    H = output_height(o)
+    voids = (pattern_voids(patterned_hole(r=o.output_needle_roller.ID / 2, R=o.output_holes_R, N=o.output_holes_N), 0, tp)
+             + pattern_voids(o.cap.bearing_retainer_holes, 0, H))
+    if o.bore_r > 0:
+        voids.append(void(o.bore_r, 0, H))
+    return Envelope(cyls=[cyl(output_plate_r(o), 0, tp), cyl(rj + o.flange.offset, tp, ts), cyl(rj, ts, H)],
+                    voids=voids)
 
 
 def make_output_step(o: output, path: str = "steps/output.step",
