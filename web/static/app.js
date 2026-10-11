@@ -2,7 +2,6 @@ import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
 
-const DEBOUNCE_MS = 400;
 
 // ---------- scene ----------
 const view = document.getElementById("view");
@@ -111,7 +110,7 @@ function loadModel(payload) {
       const mesh = new THREE.InstancedMesh(geom, m, mats.length);
       mats.forEach((x, i) => mesh.setMatrixAt(i, x));
       mesh.castShadow = mesh.receiveShadow = shadows;
-      mesh.userData = { name, custom };
+      mesh.userData = { name, custom, stock: part.stock };
       groups[part.group].add(mesh);
     }
 
@@ -178,11 +177,12 @@ const hiddenParts = new Set();
 const partsBar = document.getElementById("parts-bar");
 
 function applyVisibility() {
-  const hardware = document.getElementById("hardware").checked;
+  const show = { screw: document.getElementById("show-screws").checked,
+                 bearing: document.getElementById("show-bearings").checked };
   for (const g of Object.values(groups)) {
     for (const c of g.children) {
-      const { name, custom } = c.userData;
-      c.visible = custom ? !hiddenParts.has(name) : hardware;
+      const { name, custom, stock } = c.userData;
+      c.visible = custom ? !hiddenParts.has(name) : show[stock];
     }
   }
   for (const chip of partsBar.querySelectorAll("[data-part]")) {
@@ -263,7 +263,7 @@ function updateMotion() {
 
   const turns = theta / (2 * Math.PI);
   document.getElementById("readout").textContent =
-    `input  ${turns.toFixed(2)} rev\noutput ${(turns / ratio).toFixed(3)} rev  (${ratio}:1)\ne = ${display(e)} ${units}`;
+    `input  ${turns.toFixed(2)} rev\noutput ${(turns / ratio).toFixed(3)} rev  (${ratio}:1)\ne = ${e} mm`;
 }
 
 function tick() {
@@ -288,48 +288,6 @@ function setStatus(text, cls) {
   statusEl.className = `status ${cls || ""}`;
 }
 
-// ---------- units ----------
-// The model is in mm. Each length input keeps its exact mm value in data-mm and only its
-// display changes with the unit, so toggling back and forth never accumulates rounding.
-const MM_PER = { mm: 1, in: 25.4 };
-let units = "mm";
-try { if (localStorage.getItem("pco-units") === "in") units = "in"; } catch {}
-
-function display(mm) {
-  const v = mm / MM_PER[units];
-  return String(units === "in" ? +v.toFixed(4) : +v.toFixed(3));
-}
-
-function showLength(input) {
-  input.value = display(Number(input.dataset.mm));
-  input.step = String(Number(input.dataset.stepMm) / (units === "in" ? 20 : 1));
-}
-
-function setUnits(u) {
-  units = u;
-  try { localStorage.setItem("pco-units", u); } catch {}
-  document.querySelectorAll("input.len").forEach(showLength);
-  document.querySelectorAll(".unit-name").forEach((el) => (el.textContent = u));
-  for (const b of document.querySelectorAll("[data-units]")) {
-    b.classList.toggle("active", b.dataset.units === u);
-    b.setAttribute("aria-pressed", b.dataset.units === u);
-  }
-}
-
-// typing into a length updates its mm value
-document.addEventListener("input", (ev) => {
-  const input = ev.target;
-  if (!input.classList?.contains("len")) return;
-  const v = Number.parseFloat(input.value);
-  if (Number.isFinite(v)) input.dataset.mm = String(v * MM_PER[units]);
-}, true);
-
-function readLength(input) {
-  const raw = input.value.trim();
-  const ok = raw !== "" && Number.isFinite(Number.parseFloat(raw));
-  return ok ? Number(input.dataset.mm) : NaN;
-}
-
 function field(path, value, type) {
   const label = document.createElement("label");
   label.className = "field";
@@ -337,17 +295,15 @@ function field(path, value, type) {
   span.textContent = path.split(".").pop();
   span.title = path;
   const input = document.createElement("input");
-  input.type = "number";
-  input.dataset.path = path;
-  if (type === "float") {        // every float is a length
-    input.classList.add("len");
-    input.dataset.mm = String(value);
-    input.dataset.stepMm = "0.1";
-    showLength(input);
+  if (type === "bool") {
+    input.type = "checkbox";
+    input.checked = !!value;
   } else {
-    input.step = "1";
+    input.type = "number";
+    input.step = type === "int" ? "1" : "0.1";
     input.value = value;
   }
+  input.dataset.path = path;
   input.dataset.type = type;
   label.append(span, input);
   return label;
@@ -415,19 +371,72 @@ function renderTabs(key, tabs, values, level) {
 
 function renderForm(values) {
   form.replaceChildren();
-  const pinned = document.createElement("section");
-  pinned.className = "pinned";
-  for (const k of schema.layout.pinned) {
-    const el = node(k, values[k], schema.types[k]);
-    el.querySelector("span").textContent = schema.labels[k] ?? k;
-    pinned.append(el);
+  for (const [title, keys] of Object.entries(schema.layout.pinned)) {
+    const box = document.createElement("section");
+    box.className = "pinned";
+    box.dataset.box = title;
+    const h = document.createElement("h2");
+    h.textContent = title;
+    box.append(h);
+    for (const k of keys) box.append(node(k, values[k], schema.types[k]));
+    form.append(box);
   }
-  form.append(pinned, renderTabs("design", schema.layout.tabs, values, 1));
+  form.append(renderTabs("design", schema.layout.tabs, values, 1));
   // friendlier labels wherever a labelled argument appears
   for (const [k, label] of Object.entries(schema.labels)) {
     const input = form.querySelector(`input[data-path="${k}"]`);
     if (input) input.previousElementSibling.textContent = label;
   }
+  applyMode();
+}
+
+// ---------- simple / advanced ----------
+let mode = "simple";
+try { if (localStorage.getItem("pco-mode") === "advanced") mode = "advanced"; } catch {}
+
+function applyMode() {
+  const simple = mode === "simple";
+  for (const b of document.querySelectorAll("[data-mode]")) {
+    b.classList.toggle("active", b.dataset.mode === mode);
+    b.setAttribute("aria-pressed", b.dataset.mode === mode);
+  }
+  // Parts tab only in Advanced
+  const partsBtn = [...form.querySelectorAll(".subtabs.level-1 button")].find((b) => b.textContent === "Parts");
+  if (partsBtn) {
+    partsBtn.hidden = simple;
+    if (simple && activeTab.design === "Parts") {
+      [...form.querySelectorAll(".subtabs.level-1 button")].find((b) => b.textContent === "Bearings").click();
+    }
+  }
+  // plate spacing is derived in Simple
+  for (const input of form.querySelectorAll('[data-box="Plate Spacing"] input')) {
+    input.readOnly = simple;
+    input.classList.toggle("derived", simple);
+    input.title = simple ? "derived from the screw heads in this gap" : "";
+  }
+  document.getElementById("solver-report").hidden = !simple;
+}
+
+function setMode(m) {
+  mode = m;
+  try { localStorage.setItem("pco-mode", m); } catch {}
+  applyMode();
+  updateDirty();
+}
+
+// write a full set of values (e.g. the solver's derived dimensions) into the form
+function setFormValues(values) {
+  for (const input of form.querySelectorAll("input[data-path]")) {
+    let v = values;
+    for (const k of input.dataset.path.split(".")) v = v?.[k];
+    if (v === undefined) continue;
+    if (input.type === "checkbox") input.checked = !!v;
+    else input.value = v;
+  }
+}
+
+function simplePart(kwargs) {
+  return Object.fromEntries(schema.simple_args.map((k) => [k, kwargs[k]]));
 }
 
 function readForm() {
@@ -435,8 +444,10 @@ function readForm() {
   let ok = true;
   for (const input of form.querySelectorAll("input[data-path]")) {
     const raw = input.value.trim();
-    const v = input.dataset.type === "int" ? Number.parseInt(raw, 10) : readLength(input);
-    const bad = raw === "" || !Number.isFinite(v);
+    const isBool = input.dataset.type === "bool";
+    const v = isBool ? input.checked
+      : input.dataset.type === "int" ? Number.parseInt(raw, 10) : Number.parseFloat(raw);
+    const bad = !isBool && (raw === "" || !Number.isFinite(v));
     input.classList.toggle("invalid", bad);
     ok &&= !bad;
     const keys = input.dataset.path.split(".");
@@ -450,19 +461,43 @@ function readForm() {
 // ---------- builds ----------
 let seq = 0;
 let applied = 0;
-let timer = null;
+let built = null;         // full parameters of the model on screen
+let lastSolver = null;    // solver report for the model on screen (simple builds)
+const rebuildBtn = document.getElementById("rebuild");
+
+// light up Rebuild whenever the form differs from what is displayed
+function updateDirty() {
+  const kwargs = readForm();
+  const inputsOf = (kw) => JSON.stringify(mode === "simple" ? simplePart(kw) : kw);
+  const dirty = !kwargs || !built || inputsOf(kwargs) !== inputsOf(built);
+  rebuildBtn.classList.toggle("dirty", dirty);
+  rebuildBtn.title = dirty ? "parameters changed: rebuild the model (Enter)" : "model is up to date";
+  if (!dirty && !errorEl.hidden) {    // back to the displayed model: a failed build's error is stale
+    errorEl.hidden = true;
+    setStatus("ready", "ok");
+    if (lastSolver) showSolverReport(lastSolver);
+  }
+}
 
 async function rebuild() {
   const kwargs = readForm();
   if (!kwargs) return setStatus("fix highlighted fields", "bad");
   const mySeq = ++seq;
-  setStatus("rebuilding…", "busy");
+  const buildMode = mode;
+  setStatus(buildMode === "simple" ? "solving…" : "rebuilding…", "busy");
   const t0 = performance.now();
+  // simple builds take a while (exact collision check): show what the solver is doing
+  const poll = buildMode !== "simple" ? null : setInterval(async () => {
+    try {
+      const { stage } = await (await fetch("/api/progress")).json();
+      if (mySeq === seq && stage !== "idle") setStatus(`${stage}…`, "busy");
+    } catch {}
+  }, 500);
   try {
     const res = await fetch("/api/build", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ seq: mySeq, kwargs }),
+      body: JSON.stringify({ seq: mySeq, mode: buildMode, kwargs }),
     });
     const body = await res.json();
     if (mySeq < applied || mySeq !== seq) return;   // a newer request is in flight or done
@@ -470,30 +505,67 @@ async function rebuild() {
     if (!res.ok) {
       errorEl.textContent = body.error || `build failed (${res.status})`;
       errorEl.hidden = false;
+      if (buildMode === "simple") showSolverReport(null, body.solver_log);
       return setStatus("invalid, showing last good model", "bad");
     }
     errorEl.hidden = true;
     loadModel(body);
+    if (body.derived) {           // simple: fill every field with what the solver chose
+      setFormValues(body.derived);
+      showSolverReport(body.solver);
+    }
+    lastSolver = body.solver ?? null;
+    built = readForm();
     const n = Object.values(body.instances).reduce((a, l) => a + l.length, 0);
     setStatus(`ready · ${((performance.now() - t0) / 1000).toFixed(1)} s · ${n} parts`, "ok");
   } catch (err) {
     if (mySeq === seq) setStatus(`server unreachable: ${err.message}`, "bad");
+  } finally {
+    if (poll) clearInterval(poll);
+    syncMotorFit();
+    updateDirty();
   }
 }
 
-form.addEventListener("input", () => {
-  clearTimeout(timer);
-  timer = setTimeout(rebuild, DEBOUNCE_MS);
+function showSolverReport(solver, failLog) {
+  const el = document.getElementById("solver-report");
+  if (!solver) {
+    el.textContent = failLog?.length ? `solver tried:\n- ${failLog.join("\n- ")}` : "";
+    el.className = "bad";
+    return;
+  }
+  const lines = [`solved in ${solver.iterations} iteration${solver.iterations === 1 ? "" : "s"}`,
+                 `collision check (${solver.check_seconds} s): ` +
+                 (solver.collisions.length ? `${solver.collisions.length} collisions` : "none")];
+  for (const l of solver.log) lines.push(`- ${l}`);
+  el.textContent = lines.join("\n");
+  el.className = "";
+}
+
+form.addEventListener("input", () => { updateDirty(); syncMotorFit(); });
+for (const b of document.querySelectorAll("[data-mode]")) b.addEventListener("click", () => setMode(b.dataset.mode));
+form.addEventListener("keydown", (ev) => {   // Enter in any field rebuilds
+  if (ev.key !== "Enter") return;
+  ev.preventDefault();
+  rebuild();
 });
+form.addEventListener("submit", (ev) => ev.preventDefault());
+rebuildBtn.addEventListener("click", rebuild);
 document.getElementById("pause").addEventListener("click", (ev) => {
   paused = !paused;
   ev.target.textContent = paused ? "Play" : "Pause";
 });
 document.getElementById("reset").addEventListener("click", () => {
   renderForm(schema.values);
-  rebuild();
+  // simple mode: if the inputs now match the model on screen, show its derived values again
+  const kw = readForm();
+  if (mode === "simple" && built && kw &&
+      JSON.stringify(simplePart(kw)) === JSON.stringify(simplePart(built))) setFormValues(built);
+  syncMotorFit();
+  updateDirty();
 });
-document.getElementById("hardware").addEventListener("change", applyVisibility);
+document.getElementById("show-screws").addEventListener("change", applyVisibility);
+document.getElementById("show-bearings").addEventListener("change", applyVisibility);
 document.getElementById("view-menu").addEventListener("click", () => document.body.classList.toggle("view-open"));
 document.getElementById("menu").addEventListener("click", () => document.body.classList.toggle("menu-open"));
 const sectionToggle = document.getElementById("section");
@@ -527,8 +599,7 @@ function renderExport() {
     const row = field(k, v, "float");
     row.querySelector("span").textContent = labels[k] ?? k;
     const input = row.querySelector("input");
-    input.dataset.stepMm = "0.01";
-    showLength(input);
+    input.step = "0.01";
     input.min = "0";
     input.dataset.mag = k;
     delete input.dataset.path;      // keep it out of the dimensions form
@@ -564,6 +635,11 @@ function renderFits() {
       const sel = document.createElement("select");
       sel.dataset.fit = f.id;
       for (const o of ["tight", "loose"]) sel.append(new Option(o, o, false, o === f.default));
+      if (f.id === "base.motor_holes") {     // follows the motor's face-mount setting
+        sel.disabled = true;
+        sel.title = "set by face mount on the Motor tab";
+        tag.textContent = "set by face mount";
+      }
       row.append(span, sel);
       group.append(row);
     }
@@ -571,11 +647,17 @@ function renderFits() {
   }
 }
 
+function syncMotorFit() {
+  const fm = form.querySelector('input[data-path="drive_motor.face_mount"]');
+  const sel = document.querySelector('select[data-fit="base.motor_holes"]');
+  if (fm && sel) sel.value = fm.checked ? "loose" : "tight";
+}
+
 function readTolerancing() {
   const magnitudes = {};
   let ok = true;
   for (const input of document.querySelectorAll("input[data-mag]")) {
-    const v = readLength(input);
+    const v = Number.parseFloat(input.value);
     const bad = !Number.isFinite(v) || v < 0;
     input.classList.toggle("invalid", bad);
     ok &&= !bad;
@@ -587,7 +669,7 @@ function readTolerancing() {
 }
 
 tolEnabled.addEventListener("change", () => (tolFields.disabled = !tolEnabled.checked));
-document.getElementById("fits-reset").addEventListener("click", renderFits);
+document.getElementById("fits-reset").addEventListener("click", () => { renderFits(); syncMotorFit(); });
 
 document.getElementById("export-btn").addEventListener("click", async (ev) => {
   const kwargs = readForm();
@@ -602,7 +684,7 @@ document.getElementById("export-btn").addEventListener("click", async (ev) => {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        kwargs, tolerancing,
+        mode, kwargs, tolerancing,
         format: document.getElementById("export-format").value,
         scope: document.getElementById("export-scope").value,
       }),
@@ -636,7 +718,6 @@ if (new URLSearchParams(location.search).has("debug")) {
 schema = await (await fetch("/api/defaults")).json();
 renderForm(schema.values);
 renderExport();
-for (const b of document.querySelectorAll("[data-units]")) b.addEventListener("click", () => setUnits(b.dataset.units));
-setUnits(units);
+syncMotorFit();
 await rebuild();
 tick();

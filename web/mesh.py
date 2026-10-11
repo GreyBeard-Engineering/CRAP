@@ -2,6 +2,7 @@
 import base64
 import numpy as np
 from build123d import Location, Part
+from part_generation_fcns.base_step import base_mounting_holes
 from part_generation_fcns.gearbox import gearbox
 
 # main custom parts get their own color; everything else is keyed by name
@@ -47,11 +48,11 @@ def matrix(loc: Location) -> list[float]:
 
 
 def gearbox_payload(gb: gearbox) -> dict:
-    groups, kinds = gb.motion_groups(), gb.part_kinds()
+    groups, kinds, stock = gb.motion_groups(), gb.part_kinds(), gb.stock_types()
     parts, instances = {}, {}
     for name, part in gb.parts.items():
         parts[name] = {**tessellate(part), "group": groups[name], "color": _color(name),
-                       "kind": kinds[name]}
+                       "kind": kinds[name], "stock": stock[name]}
     for name, locs in gb.locations().items():
         instances[name] = [matrix(l) for l in locs]
     z = gb.stack()
@@ -64,6 +65,6 @@ def gearbox_payload(gb: gearbox) -> dict:
             # the assembly is posed at input angle 0, with the cycloid offset by +e along X
             "cycloid_center": [gb.cycloid.e, 0.0],
             "height": z["top_cap"] + gb.top.cap.flange.thickness,
-            "radius": gb.base.mounting_holes.R + gb.base.mounting_holes.r + gb.base.mounting_hole_offset,
+            "radius": base_mounting_holes(gb.base).R + gb.base.mounting_holes.r + gb.base.mounting_hole_offset,
         },
     }

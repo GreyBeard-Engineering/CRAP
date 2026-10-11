@@ -5,6 +5,7 @@ Run:  python test_cycloid.py [output.step] [cap.step]   (default: steps/test_cyc
 import sys
 import numpy as np
 from part_generation_fcns.classdefs import *
+from part_generation_fcns.cap_step import cap_radii
 from part_generation_fcns.cycloid_step import cycloid_profile, cycloid_thickness, make_cycloid_step, output_holes
 
 
@@ -21,7 +22,7 @@ def make_test_cycloid() -> cycloid:
         cap=cap(
             flange=flange(thickness=2.0, offset=1.5),
             bearing_retainer_holes=patterned_hole(r=1.0, R=12.0, N=4),
-            r=15.0,
+            edge_offset=2.0,
         ),
     )
 
@@ -70,7 +71,7 @@ def check_part(c: cycloid, path: str, cap_path: str, r_max: float):
     cbb = cap_part.bounding_box()
     assert cap_part.is_valid, "generated cap is not valid"
     assert abs(cbb.size.Z - c.cap.flange.thickness) < 1e-6, cbb.size
-    assert abs(cbb.size.X - 2 * c.cap.r) < 1e-3, cbb.size
+    assert abs(cbb.size.X - 2 * cap_radii(c.cap, c.input_bearing)[1]) < 1e-3, cbb.size
     print(f"cap ok: volume={cap_part.volume:.1f} mm^3, bbox={cbb.size}, wrote {cap_path}")
 
 

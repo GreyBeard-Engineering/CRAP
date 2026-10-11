@@ -26,11 +26,11 @@ FEATURES = {
     "eccentric_insert.journal":   ("eccentric_insert", "journal (input bearing ID)", "bearing", "shaft", "loose"),
     "eccentric_insert.shaft_hole": ("eccentric_insert", "motor shaft hole", "bearing", "hole", "loose"),
     "output.journal":             ("output", "journal (output bearing ID)", "bearing", "shaft", "loose"),
-    "output.needle_holes":        ("output", "needle pin holes", "bolt", "hole", "tight"),
+    "output.needle_holes":        ("output", "needle screw holes", "bolt", "hole", "tight"),
     "output.retainer_holes":      ("output", "output cap screw holes", "bolt", "hole", "tight"),
     "output_cap.holes":           ("output_cap", "screw holes", "bolt", "hole", "loose"),
     "roller_spacer.bore":         ("roller spacers", "bore (ring roller bolt)", "bolt", "hole", "loose"),
-    "needle_spacer.bore":         ("needle_spacer", "bore (needle pin)", "bolt", "hole", "loose"),
+    "needle_spacer.bore":         ("needle_spacer", "bore (needle screw)", "bolt", "hole", "loose"),
 }
 
 DEFAULT_MAGNITUDES = {"bearing": 0.05, "threaded": 0.10, "loose": 0.15, "cycloid_clearance": 0.05}

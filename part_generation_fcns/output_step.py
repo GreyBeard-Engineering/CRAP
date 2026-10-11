@@ -1,8 +1,14 @@
 from build123d import *
 from part_generation_fcns.classdefs import *
+from part_generation_fcns.errors import GeometryError
 from part_generation_fcns.paths import ensure_parent
-from part_generation_fcns.cap_step import check_cap, make_cap
+from part_generation_fcns.cap_step import cap_radii, check_cap, make_cap
 from part_generation_fcns.tolerancing import NOMINAL, tolerancing
+
+
+def output_plate_r(o: output) -> float:
+    """Plate radius: plate_edge_offset beyond the needle screw holes' outer edge."""
+    return o.output_holes_R + o.output_needle_roller.ID / 2 + o.plate_edge_offset
 
 
 def output_height(o: output) -> float:
@@ -17,13 +23,13 @@ def _check_output(o: output):
     if rs >= o.output_bearing.OD / 2:
         print("warning: output shoulder reaches the output bearing outer race")
     if o.output_holes_R - pin_r <= rs:
-        raise ValueError("output pin holes overlap the shoulder")
-    if o.output_holes_R + pin_r >= o.plate_r:
-        raise ValueError("output pin holes break through the plate edge")
+        raise GeometryError("output.holes_overlap_shoulder", "output pin holes overlap the shoulder")
+    if o.plate_edge_offset <= 0:
+        raise GeometryError("output.plate_edge_offset", "plate_edge_offset must be > 0 (pin holes would break through the plate edge)")
     if o.bore_r >= rj:
-        raise ValueError("bore breaks through the journal")
-    check_cap(o.cap, o.output_bearing, race="inner")
-    if o.cap.r < o.bore_r:
+        raise GeometryError("output.bore_breaks_journal", "bore breaks through the journal")
+    check_cap(o.cap, o.output_bearing, race="inner", name="output_cap")
+    if cap_radii(o.cap, o.output_bearing, "inner")[0] < o.bore_r:
         print("warning: output cap inner radius is smaller than the bore")
 
 
@@ -42,7 +48,7 @@ def make_output(o: output, tol: tolerancing = NOMINAL) -> Part:
         # (r, z) cross-section, revolved about Z
         with BuildSketch(Plane.XZ):
             with BuildLine():
-                Polyline((0, 0), (o.plate_r, 0), (o.plate_r, tp), (rs, tp),
+                Polyline((0, 0), (output_plate_r(o), 0), (output_plate_r(o), tp), (rs, tp),
                          (rs, ts), (rjt, ts), (rjt, H), (0, H), close=True)
             make_face()
         revolve(axis=Axis.Z)
@@ -75,7 +81,7 @@ if __name__ == "__main__":
     o = output(
         output_bearing=bearing(ID=25, OD=37, th=7),               # 6805-ish
         flange=flange(thickness=3.0, offset=2.0),
-        plate_r=34.0,
+        plate_edge_offset=8.5,                                    # 34 mm radius
         plate_t=4.0,
         output_needle_roller=bearing(ID=3, OD=6, th=2.5),         # MR63-ish
         output_holes_R=24.0,
@@ -84,7 +90,7 @@ if __name__ == "__main__":
         cap=cap(
             flange=flange(thickness=2.0, offset=1.5),
             bearing_retainer_holes=patterned_hole(r=1.0, R=9.5, N=4),    # M2 pilot
-            r=6.0,                                                # matches bore
+            edge_offset=2.5,                                      # 6 mm bore: matches the output bore
         ),
     )
     for p in make_output_step(o):

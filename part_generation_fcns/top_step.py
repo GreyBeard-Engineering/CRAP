@@ -1,5 +1,6 @@
 from build123d import *
 from part_generation_fcns.classdefs import *
+from part_generation_fcns.errors import GeometryError
 from part_generation_fcns.paths import ensure_parent
 from part_generation_fcns.tolerancing import NOMINAL, tolerancing
 from part_generation_fcns.cap_step import check_cap, make_cap
@@ -13,20 +14,25 @@ def _radii(tp: top):
     return rb, ri, rw, H
 
 
+def top_outer_r(tp: top) -> float:
+    """Base disc radius: edge_offset beyond the roller holes' outer edge."""
+    return tp.roller_holes_R + tp.roller_bearing.ID / 2 + tp.edge_offset
+
+
 def _check_top(tp: top):
     rb, ri, rw, H = _radii(tp)
     roller_hole_r = tp.roller_bearing.ID / 2
     rh = tp.cap.bearing_retainer_holes
 
-    check_cap(tp.cap, tp.output_bearing)
+    check_cap(tp.cap, tp.output_bearing, name="top_cap")
     if rh.R + rh.r >= rw:
-        raise ValueError("bearing retainer holes must sit within the tower wall")
+        raise GeometryError("top.retainer_holes_outside_wall", "bearing retainer holes must sit within the tower wall")
     if tp.roller_holes_R - roller_hole_r <= rw:
-        raise ValueError("roller holes overlap the tower wall")
-    if tp.roller_holes_R + roller_hole_r >= tp.outer_r:
-        raise ValueError("roller holes break through outer edge")
+        raise GeometryError("top.roller_holes_hit_wall", "roller holes overlap the tower wall")
+    if tp.edge_offset <= 0:
+        raise GeometryError("top.edge_offset", "top edge_offset must be > 0 (roller holes would break through the edge)")
     if tp.base_thickness >= H:
-        raise ValueError("base_thickness must be less than the tower height")
+        raise GeometryError("top.base_too_thick", "base_thickness must be less than the tower height")
 
 
 def make_top(tp: top, tol: tolerancing = NOMINAL) -> Part:
@@ -39,7 +45,7 @@ def make_top(tp: top, tol: tolerancing = NOMINAL) -> Part:
         # (r, z) cross-section, revolved about Z
         with BuildSketch(Plane.XZ):
             with BuildLine():
-                Polyline((ri, 0), (tp.outer_r, 0), (tp.outer_r, tb), (rw, tb),
+                Polyline((ri, 0), (top_outer_r(tp), 0), (top_outer_r(tp), tb), (rw, tb),
                          (rw, H), (rb, H), (rb, tf), (ri, tf), close=True)
             make_face()
         revolve(axis=Axis.Z)
@@ -76,9 +82,9 @@ if __name__ == "__main__":
         cap=cap(
             flange=flange(thickness=2.0, offset=2.0),
             bearing_retainer_holes=patterned_hole(r=1.25, R=21.5, N=6),  # M2.5 pilot
-            r=24.5,                                               # flush with tower wall
+            edge_offset=1.75,                                     # 24.5 mm: flush with tower wall
         ),
-        outer_r=48.0,
+        edge_offset=7.0,                                          # 48 mm radius
     )
     top_part, cap_part = make_top_step(tp)
     for p in (top_part, cap_part):

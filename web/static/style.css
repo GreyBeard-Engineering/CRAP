@@ -31,6 +31,8 @@ body {
 #view canvas { display: block; }
 header { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; margin-bottom: 12px; }
 h1 { font-size: 22px; margin: 0; font-weight: 700; letter-spacing: 0.08em; color: var(--accent); line-height: 1.1; }
+.brand { display: flex; align-items: center; gap: 9px; }
+.logo { width: 34px; height: 34px; flex: none; color: var(--accent); }
 .tagline { font-size: 11px; color: var(--muted); letter-spacing: 0.02em; }
 .status { font-size: 11px; color: var(--muted); white-space: nowrap; }
 .status.busy { color: var(--accent); }
@@ -125,12 +127,18 @@ legend { color: var(--muted); padding: 0 4px; font-size: 12px; }
 fieldset.bare { border: 0; padding: 0; margin: 0; min-width: 0; }
 fieldset.bare:disabled { opacity: 0.45; }
 .export-row { margin-top: 12px; }
-.units { display: flex; flex: none; }
-.units button { flex: none; padding: 6px 10px; border-radius: 0; }
-.units button:first-child { border-radius: 6px 0 0 6px; }
-.units button:last-child { border-radius: 0 6px 6px 0; margin-left: -1px; }
-.units button.active { border-color: var(--accent); color: var(--accent); position: relative; }
 button.primary { background: var(--accent); color: #1a1205; border-color: var(--accent); font-weight: 600; }
+#rebuild { font-weight: 600; }
+.mode-switch { display: flex; margin-bottom: 8px; }
+.mode-switch button { flex: 1; border-radius: 0; }
+.mode-switch button:first-child { border-radius: 6px 0 0 6px; }
+.mode-switch button:last-child { border-radius: 0 6px 6px 0; margin-left: -1px; }
+.mode-switch button.active { border-color: var(--accent); color: var(--accent); position: relative; }
+.field input.derived { color: var(--muted); border-style: dashed; }
+.field input[type="checkbox"] { width: auto; }
+#solver-report { font: 11px/1.5 ui-monospace, Consolas, monospace; color: var(--muted); white-space: pre-wrap; }
+#solver-report.bad { color: var(--error); }
+#rebuild.dirty { background: var(--accent); color: #1a1205; border-color: var(--accent); }
 button:disabled { opacity: 0.6; cursor: progress; }
 #section-angle-row[hidden] { display: none; }
 
@@ -209,6 +217,15 @@ button:disabled { opacity: 0.6; cursor: progress; }
   border: 1px solid var(--line);
   border-radius: 8px;
 }
+.pinned h2 {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  margin: 0 0 2px;
+}
+.pinned + .pinned { margin-top: -4px; }
 .pinned .field span { color: var(--text); font-weight: 600; }
 .pinned .field input { width: 96px; font-size: 14px; }
 .subtabs { display: flex; flex-wrap: wrap; gap: 4px; margin: 4px 0 8px; }

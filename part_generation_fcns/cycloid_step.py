@@ -1,8 +1,9 @@
 import numpy as np
 from build123d import *
 from part_generation_fcns.classdefs import *
+from part_generation_fcns.errors import GeometryError
 from part_generation_fcns.paths import ensure_parent
-from part_generation_fcns.cap_step import check_cap, make_cap
+from part_generation_fcns.cap_step import cap_radii, check_cap, make_cap
 from part_generation_fcns.tolerancing import NOMINAL, tolerancing
 
 def cycloid_profile(c: cycloid, pts_per_lobe: int = 60, clearance: float = 0.0) -> np.ndarray:
@@ -18,6 +19,14 @@ def cycloid_profile(c: cycloid, pts_per_lobe: int = 60, clearance: float = 0.0) 
     return np.column_stack([x, y])
 
 
+def profile_undercuts(c: cycloid, pts_per_lobe: int = 400) -> bool:
+    """True when the roller is too big for the trochoid's tightest curve: the offset profile
+    then doubles back on itself (its direction reverses) and the disc outline is invalid."""
+    p = cycloid_profile(c, pts_per_lobe)
+    d = np.diff(np.vstack([p, p[:1]]), axis=0)
+    return bool(np.any(np.sum(d * np.roll(d, -1, axis=0), axis=1) < 0))
+
+
 def output_holes(c: cycloid) -> patterned_hole:
     """Output holes sized so each needle roller orbits its hole by e."""
     return patterned_hole(r=c.output_needle_roller.OD / 2 + c.e, R=c.output_holes_R, N=c.output_holes_N)
@@ -30,11 +39,14 @@ def cycloid_thickness(c: cycloid) -> float:
 def make_cycloid(c: cycloid, tol: tolerancing = NOMINAL) -> Part:
     n = c.ratio + 1
     if c.roller_R / (c.e * n) <= 1:
-        raise ValueError("roller_R / (e * (ratio+1)) must be > 1 (profile cusps)")
-    check_cap(c.cap, c.input_bearing)
+        raise GeometryError("cycloid.cusps", "roller_R / (e * (ratio+1)) must be > 1 (profile cusps)")
+    if profile_undercuts(c):
+        raise GeometryError("cycloid.undercut", "the roller is too large for this e / ratio / roller R: "
+                            "the cycloid profile undercuts (reduce e or the roller OD, or increase roller R)")
+    check_cap(c.cap, c.input_bearing, name="cycloid_cap")
     oh = output_holes(c)
-    if c.cap.r >= oh.R - oh.r:
-        raise ValueError("cap would cover the output holes")
+    if cap_radii(c.cap, c.input_bearing)[1] >= oh.R - oh.r:
+        raise GeometryError("cycloid.cap_covers_output_holes", "cap would cover the output holes")
 
     tf = c.cap.flange.thickness
     rb = c.input_bearing.OD / 2 + tol.delta("cycloid.bearing_seat")
@@ -82,7 +94,7 @@ if __name__ == "__main__":
         cap=cap(
             flange=flange(thickness=2.0, offset=1.5),
             bearing_retainer_holes=patterned_hole(r=1.0, R=12.0, N=4),  # M2 pilot
-            r=15.0,
+            edge_offset=2.0,                                      # 15 mm radius
         ),
     )
     disc, cap_part = make_cycloid_step(c)

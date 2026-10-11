@@ -16,6 +16,7 @@ class patterned_hole:
 class motor:
     shaft_r: float
     mounting_holes: patterned_hole
+    face_mount: bool = False # screws pass through the base into the motor face (base holes loose)
 
 @dataclass
 class flange:
@@ -26,7 +27,8 @@ class flange:
 class cap:
     flange: flange # lip on the part and cap inner edge overhang the bearing OD by offset; both are flange.thickness thick
     bearing_retainer_holes: patterned_hole
-    r: float # free edge: outer radius of an outer-race cap, inner radius of an inner-race cap
+    edge_offset: float # free edge's distance beyond the screw holes' far edge: outward for an
+                       # outer-race cap (outer radius), inward for an inner-race cap (bore)
 
 @dataclass
 class cycloid:
@@ -47,9 +49,9 @@ class base:
     roller_bearing: bearing
     roller_holes_R: float # hole r = roller_bearing.ID/2
     roller_holes_N: int
-    outer_r: float # radius of the part sans the mounting holes
+    edge_offset: float # outer edge beyond the roller holes' outer edge (radius sans the mounting tabs)
     t: float
-    mounting_holes: patterned_hole # the R of these holes must exceed outer_R
+    mounting_holes: patterned_hole # R: hole centers' distance beyond the base radius
     mounting_hole_offset: float # mounting hole is concentric with a ring of material; r_ring - r_hole = mounting_hole_offset. Like a donut
     mounting_hole_fillet_r: float # fillet radius between mounting holes and base
 
@@ -62,7 +64,7 @@ class top:
     roller_holes_R: float # hole r = roller_bearing.ID/2
     roller_holes_N: int
     cap: cap
-    outer_r: float # radius of the base disc
+    edge_offset: float # outer edge beyond the roller holes' outer edge
 
 @dataclass
 class eccentric_insert:
@@ -75,7 +77,7 @@ class eccentric_insert:
 class output:
     output_bearing: bearing # journal r = ID/2, journal height = th
     flange: flange # shoulder supporting the bearing inner race; r = ID/2 + offset
-    plate_r: float
+    plate_edge_offset: float # plate edge beyond the needle screw holes' outer edge
     plate_t: float
     output_needle_roller: bearing # pin holes r = ID/2
     output_holes_R: float
