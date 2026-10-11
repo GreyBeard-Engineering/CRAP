@@ -21,6 +21,16 @@ from web.mesh import gearbox_payload
 STATIC = Path(__file__).parent / "static"
 app = FastAPI(title="CRAP: Cycloidal Reducer Algorithm & Parametrizer")
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
+
+
+@app.middleware("http")
+async def _revalidate(request, call_next):
+    """Make browsers check for a newer page / script on every load (cheap via ETag), so a
+    changed app.js is never served stale from the browser cache."""
+    response = await call_next(request)
+    if request.url.path == "/" or request.url.path.startswith("/static/"):
+        response.headers["Cache-Control"] = "no-cache"
+    return response
 _build_lock = threading.Lock()
 _progress = {"stage": "idle"}          # what a simple-mode build is doing, for /api/progress
 _solved: dict[str, object] = {}       # simple spec (json) -> SolveResult, so export needn't re-solve

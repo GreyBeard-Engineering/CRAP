@@ -408,12 +408,9 @@ function applyMode() {
       [...form.querySelectorAll(".subtabs.level-1 button")].find((b) => b.textContent === "Bearings").click();
     }
   }
-  // plate spacing is derived in Simple
-  for (const input of form.querySelectorAll('[data-box="Plate Spacing"] input')) {
-    input.readOnly = simple;
-    input.classList.toggle("derived", simple);
-    input.title = simple ? "derived from the screw heads in this gap" : "";
-  }
+  // plate spacing is derived in Simple, so it isn't shown there
+  const spacing = form.querySelector('[data-box="Plate Spacing"]');
+  if (spacing) spacing.hidden = simple;
   document.getElementById("solver-report").hidden = !simple;
 }
 

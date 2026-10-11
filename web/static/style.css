@@ -134,7 +134,6 @@ button.primary { background: var(--accent); color: #1a1205; border-color: var(--
 .mode-switch button:first-child { border-radius: 6px 0 0 6px; }
 .mode-switch button:last-child { border-radius: 0 6px 6px 0; margin-left: -1px; }
 .mode-switch button.active { border-color: var(--accent); color: var(--accent); position: relative; }
-.field input.derived { color: var(--muted); border-style: dashed; }
 .field input[type="checkbox"] { width: auto; }
 #solver-report { font: 11px/1.5 ui-monospace, Consolas, monospace; color: var(--muted); white-space: pre-wrap; }
 #solver-report.bad { color: var(--error); }
@@ -226,6 +225,7 @@ button:disabled { opacity: 0.6; cursor: progress; }
   margin: 0 0 2px;
 }
 .pinned + .pinned { margin-top: -4px; }
+.pinned[hidden] { display: none; }
 .pinned .field span { color: var(--text); font-weight: 600; }
 .pinned .field input { width: 96px; font-size: 14px; }
 .subtabs { display: flex; flex-wrap: wrap; gap: 4px; margin: 4px 0 8px; }
