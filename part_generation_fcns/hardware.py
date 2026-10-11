@@ -1,5 +1,6 @@
 from build123d import *
 from part_generation_fcns.classdefs import *
+from part_generation_fcns.envelope import Envelope, cyl, void
 
 # ISO 4762 socket head cap screw proportions: d -> (head_d, head_h, socket_af)
 _SHCS = {
@@ -51,8 +52,22 @@ def make_bolt(b: bolt) -> Part:
     return part.part
 
 
+def envelope_bolt(b: bolt) -> Envelope:
+    """Head and shank cylinders; the hex socket as a round void (its inscribed circle)."""
+    return Envelope(cyls=[cyl(b.head_d / 2, 0, b.head_h), cyl(b.d / 2, -b.length, 0)],
+                    voids=[void(b.socket_af / 2, b.head_h - b.d / 2, b.head_h)])
+
+
+def envelope_bored_cylinder(r_outer: float, r_inner: float, h: float) -> Envelope:
+    return Envelope(cyls=[cyl(r_outer, 0, h, r_in=r_inner)])
+
+
 def make_bearing(b: bearing) -> Part:
-    return bored_cylinder(b.OD / 2, b.ID / 2, b.th)
+    return bored_cylinder(b.OD / 2, b.ID / 2, b.thickness)
+
+
+def envelope_bearing(b: bearing) -> Envelope:
+    return envelope_bored_cylinder(b.OD / 2, b.ID / 2, b.thickness)
 
 
 def spacer_r(b: bearing) -> float:
@@ -63,3 +78,7 @@ def spacer_r(b: bearing) -> float:
 def make_spacer(b: bearing, h: float, bore_delta: float = 0.0) -> Part:
     """Spacer riding on a bearing's pin, contacting only its inner race."""
     return bored_cylinder(spacer_r(b), b.ID / 2 + bore_delta, h)
+
+
+def envelope_spacer(b: bearing, h: float) -> Envelope:
+    return envelope_bored_cylinder(spacer_r(b), b.ID / 2, h)

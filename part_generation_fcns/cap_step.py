@@ -1,5 +1,6 @@
 from build123d import *
 from part_generation_fcns.classdefs import *
+from part_generation_fcns.envelope import Envelope, cyl, pattern_voids
 from part_generation_fcns.errors import GeometryError, geometry_issue
 
 
@@ -64,3 +65,13 @@ def make_cap(cp: cap, b: bearing, race: str = "outer", hole_delta: float = 0.0,
                     fillet(corners, edge_fillet)
         extrude(amount=cp.flange.thickness)
     return part.part
+
+
+def envelope_cap(cp: cap, b: bearing, race: str = "outer", cutouts: patterned_hole | None = None) -> Envelope:
+    """Ring with its screw holes (and cutouts) as voids; the notch fillets are ignored."""
+    ri, ro = cap_radii(cp, b, race)
+    t = cp.flange.thickness
+    voids = pattern_voids(cp.bearing_retainer_holes, 0, t)
+    if cutouts is not None:
+        voids += pattern_voids(cutouts, 0, t)
+    return Envelope(cyls=[cyl(ro, 0, t, r_in=ri)], voids=voids)

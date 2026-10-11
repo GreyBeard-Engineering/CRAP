@@ -3,9 +3,10 @@ import dataclasses
 import numpy as np
 from build123d import *
 from part_generation_fcns.classdefs import *
+from part_generation_fcns.envelope import SPACING, Envelope, pattern_voids, void
 from part_generation_fcns.errors import GeometryError, geometry_issue
 from part_generation_fcns.paths import ensure_parent
-from part_generation_fcns.cap_step import cap_radii, check_cap, make_cap
+from part_generation_fcns.cap_step import cap_radii, check_cap, envelope_cap, make_cap
 from part_generation_fcns.tolerancing import NOMINAL, tolerancing
 
 def cycloid_profile(c: cycloid, pts_per_lobe: int = 60, clearance: float = 0.0) -> np.ndarray:
@@ -13,11 +14,11 @@ def cycloid_profile(c: cycloid, pts_per_lobe: int = 60, clearance: float = 0.0) 
     offset by the roller radius, so clearance just adds to that offset."""
     roller_r = c.roller_bearing.OD / 2 + clearance
     n = c.ratio + 1  # number of ring rollers
-    th = np.linspace(0, 2 * np.pi, c.ratio * pts_per_lobe, endpoint=False)
-    psi = np.arctan2(np.sin((1 - n) * th),
-                     c.roller_R / (c.e * n) - np.cos((1 - n) * th))
-    x = c.roller_R * np.cos(th) - roller_r * np.cos(th + psi) - c.e * np.cos(n * th)
-    y = -c.roller_R * np.sin(th) + roller_r * np.sin(th + psi) + c.e * np.sin(n * th)
+    theta = np.linspace(0, 2 * np.pi, c.ratio * pts_per_lobe, endpoint=False)
+    psi = np.arctan2(np.sin((1 - n) * theta),
+                     c.roller_R / (c.e * n) - np.cos((1 - n) * theta))
+    x = c.roller_R * np.cos(theta) - roller_r * np.cos(theta + psi) - c.e * np.cos(n * theta)
+    y = -c.roller_R * np.sin(theta) + roller_r * np.sin(theta + psi) + c.e * np.sin(n * theta)
     return np.column_stack([x, y])
 
 
@@ -47,10 +48,7 @@ def cycloid_cap_fillet(c: cycloid) -> float:
 
 
 def make_cycloid_cap(c: cycloid, tol: tolerancing = NOMINAL) -> Part:
-    oh = output_holes(c)
-    cut = None
-    if cap_radii(cycloid_cap(c), c.input_bearing)[1] > oh.R - oh.r:   # it reaches the output holes
-        cut = patterned_hole(r=oh.r + tol.clearance, R=oh.R, N=oh.N, start_angle=oh.start_angle)
+    cut = _cap_cutouts(c, tol.clearance)    # the output holes, where the cap reaches them
     return make_cap(cycloid_cap(c), c.input_bearing, hole_delta=tol.delta("cycloid_cap.holes"),
                     cutouts=cut, edge_fillet=cycloid_cap_fillet(c))
 
@@ -66,7 +64,7 @@ def cap_screw_hole_gap(c: cycloid) -> float:
 
 
 def cycloid_thickness(c: cycloid) -> float:
-    return c.cap.flange.thickness + c.input_bearing.th
+    return c.cap.flange.thickness + c.input_bearing.thickness
 
 
 def make_cycloid(c: cycloid, tol: tolerancing = NOMINAL) -> Part:
@@ -104,8 +102,37 @@ def make_cycloid(c: cycloid, tol: tolerancing = NOMINAL) -> Part:
         # bearing seat above the flange lip
         with BuildSketch(Plane.XY.offset(tf)):
             Circle(rb)
-        extrude(amount=c.input_bearing.th, mode=Mode.SUBTRACT)
+        extrude(amount=c.input_bearing.thickness, mode=Mode.SUBTRACT)
     return disc.part
+
+
+def _cap_cutouts(c: cycloid, clearance: float = 0.0) -> patterned_hole | None:
+    """The output holes where the cycloid cap reaches them (else None)."""
+    oh = output_holes(c)
+    if cap_radii(cycloid_cap(c), c.input_bearing)[1] > oh.R - oh.r:
+        return patterned_hole(r=oh.r + clearance, R=oh.R, N=oh.N, start_angle=oh.start_angle)
+    return None
+
+
+def envelope_cycloid(c: cycloid) -> Envelope:
+    """The profile as a prism; the lip bore, bearing seat, output holes and cap screw holes as voids."""
+    t, tf = cycloid_thickness(c), c.cap.flange.thickness
+    # sample the true curve finely enough that the checker needn't fill gaps with chords (a chord
+    # across a valley bulges into the roller seated there)
+    ppl = 60
+    prof = cycloid_profile(c, ppl)
+    while ppl < 2000 and np.linalg.norm(np.diff(np.vstack([prof, prof[:1]]), axis=0), axis=1).max() > SPACING:
+        ppl *= 2
+        prof = cycloid_profile(c, ppl)
+    return Envelope(prisms=[(prof, 0, t)],
+                    voids=[void(c.input_bearing.OD / 2 - c.cap.flange.offset, 0, t),
+                           void(c.input_bearing.OD / 2, tf, t)]
+                          + pattern_voids(output_holes(c), 0, t)
+                          + pattern_voids(c.cap.bearing_retainer_holes, 0, t))
+
+
+def envelope_cycloid_cap(c: cycloid) -> Envelope:
+    return envelope_cap(cycloid_cap(c), c.input_bearing, cutouts=_cap_cutouts(c))
 
 
 def make_cycloid_step(c: cycloid, path: str = "steps/cycloid.step",
@@ -121,10 +148,10 @@ def make_cycloid_step(c: cycloid, path: str = "steps/cycloid.step",
 
 if __name__ == "__main__":
     c = cycloid(
-        roller_bearing=bearing(ID=2, OD=5, th=2.5),      # MR52-ish
+        roller_bearing=bearing(ID=2, OD=5, thickness=2.5),      # MR52-ish
         roller_R=40.0,
-        input_bearing=bearing(ID=10, OD=19, th=5),        # 6800-ish
-        output_needle_roller=bearing(ID=3, OD=6, th=2.5),  # MR63-ish
+        input_bearing=bearing(ID=10, OD=19, thickness=5),        # 6800-ish
+        output_needle_roller=bearing(ID=3, OD=6, thickness=2.5),  # MR63-ish
         output_holes_R=24.0,
         output_holes_N=6,
         e=1.2,

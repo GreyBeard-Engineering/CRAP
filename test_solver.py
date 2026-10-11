@@ -1,6 +1,9 @@
 """Simple-mode solver checks.
 
-Run:  python test_solver.py [--full]   (--full runs the exact collision check on every case)
+Run:  python test_solver.py [--full]
+
+Every case gets the fast clearance check over a full input turn; --full also runs the slow
+exact (OCC) check in the assembled pose on every solved case.
 """
 import itertools
 import sys
@@ -25,9 +28,13 @@ def sweep(full: bool):
         spec = spec_from_kwargs(dict(EXAMPLE_KWARGS, roller_R=roller_R, e=e, ratio=ratio))
         tag = f"R={roller_R:<3} e={e:<4} ratio={ratio:<3}"
         try:
-            res = solve(spec, check_collisions=full, max_iter=12)
+            res = solve(spec, max_iter=12)
             ok += 1
             extra = f"{res.iterations} it" + (f", {len(res.log)} fix(es)" if res.log else "")
+            extra += f", check {res.check_seconds:.2f} s"
+            if full:
+                exact = res.gearbox.collisions(mode="exact")
+                assert exact == [], f"{tag}: the fast check passed but the exact check found {exact}"
             print(f"  {tag} solved ({extra})")
         except SolveError as ex:
             failed += 1

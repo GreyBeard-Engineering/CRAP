@@ -27,6 +27,8 @@ class simple_spec:
     output_needle_roller: bearing
     output_bearing: bearing
     drive_motor: motor
+    num_disks: int = 1
+    inter_disk_spacing: float = 3.0
 
 
 @dataclass
@@ -36,9 +38,17 @@ class design_rules:
     clearance: float = 1.0         # running clearance between moving parts and plates
     lip_frac: float = 0.3          # lip / cap overlap onto a race, as a fraction of race width
     screw_frac: float = 0.10       # largest cap screw diameter as a fraction of bearing OD...
-    screw_th_frac: float = 0.5     # ...and of bearing width (keeps screws sane on big thin bearings)
+    screw_thickness_frac: float = 0.5  # ...and of bearing width (keeps screws sane on big thin bearings)
     thread_engage: float = 1.5     # threaded depth >= this * screw diameter
     min_plate: float = 3.0         # thinnest plate
+
+    @property
+    def screw_th_frac(self) -> float:
+        return self.screw_thickness_frac
+
+    @screw_th_frac.setter
+    def screw_th_frac(self, val: float):
+        self.screw_thickness_frac = val
 
 
 RULES = design_rules()
@@ -66,8 +76,8 @@ class SolveResult:
 
 def _screw(b: bearing, rules: design_rules, step: int = 0) -> float:
     """Cap screw diameter for bearing b: the largest size <= screw_frac * OD and
-    <= screw_th_frac * width (at least the smallest size), then `step` sizes smaller."""
-    limit = max(SCREW_SIZES[0], min(rules.screw_frac * b.OD, rules.screw_th_frac * b.th))
+    <= screw_thickness_frac * width (at least the smallest size), then `step` sizes smaller."""
+    limit = max(SCREW_SIZES[0], min(rules.screw_frac * b.OD, rules.screw_thickness_frac * b.thickness))
     idx = max(i for i, d in enumerate(SCREW_SIZES) if d <= limit) - step
     if idx < 0:
         raise SolveError(f"no screw small enough for the {b.ID:g}x{b.OD:g} bearing's cap")
@@ -90,7 +100,7 @@ def _lip(b: bearing, rules: design_rules) -> float:
 
 
 def _flange(b: bearing, rules: design_rules) -> flange:
-    t = max(rules.min_wall, math.ceil(0.3 * b.th * 2) / 2)       # round up to 0.5 mm
+    t = max(rules.min_wall, math.ceil(0.3 * b.thickness * 2) / 2)       # round up to 0.5 mm
     return flange(thickness=t, offset=round(_lip(b, rules), 3))
 
 
@@ -186,16 +196,20 @@ def derive(spec: simple_spec, rules: design_rules = RULES, adj: dict | None = No
 
     # stack gaps, driven by the screw heads that sit in them
     needle_d = nr.ID
-    cyc_t = _flange(ib, rules).thickness + ib.th
-    needle_head_drop = _head(needle_d)[1] - (cyc_t - nr.th) / 2
+    cycloid_thickness_val = _flange(ib, rules).thickness + ib.thickness
+    needle_head_drop = _head(needle_d)[1] - (cycloid_thickness_val - nr.thickness) / 2
     base_cycloid = cl + max(0.0, needle_head_drop) + adj["base_cycloid_spacing"]
     cap_output = cl + _head(d_c)[1] + adj["cap_output_spacing"]
+    inter_disk = cl + _head(d_c)[1] + adj.get("inter_disk_spacing", 0.0)
     output_top = cl + adj["output_top_spacing"]
 
     motor_d = 2 * m.mounting_holes.r
-    base_t = max(4.0, te * rb.ID, 0.0 if m.face_mount else te * motor_d)
+    base_thickness = max(4.0, te * rb.ID, 0.0 if m.face_mount else te * motor_d)
     ring = motor_d + motor_d / 2               # mounting tab ring radius (hole r + wall of one d)
     tab_size = min(SCREW_SIZES, key=lambda s: abs(s - motor_d))
+
+    output_plate_thickness = max(rules.min_plate, te * nr.ID)
+    insert_flange_offset = _lip(ib, rules)
 
     return dict(
         ratio=spec.ratio,
@@ -205,6 +219,8 @@ def derive(spec: simple_spec, rules: design_rules = RULES, adj: dict | None = No
         base_cycloid_spacing=r3(base_cycloid),
         cap_output_spacing=r3(cap_output),
         output_top_spacing=r3(output_top),
+        inter_disk_spacing=r3(inter_disk),
+        num_disks=getattr(spec, "num_disks", 1),
         e=e,
         input_bearing=ib,
         output_needle_roller=nr,
@@ -213,7 +229,8 @@ def derive(spec: simple_spec, rules: design_rules = RULES, adj: dict | None = No
         cycloid_cap=cyc_cap,
         drive_motor=m,
         shaft_hole_offset=r3(ib.ID / 2 + _lip(ib, rules) + e + cl - m.shaft_r + adj["shaft_hole_offset"]),
-        base_t=r3(base_t),
+        base_thickness=r3(base_thickness),
+        base_t=r3(base_thickness),
         mounting_holes=patterned_hole(r=tab_size / 2, R=r3(tab_size / 2 + tab_size), N=2),
         mounting_hole_offset=r3(tab_size),
         mounting_hole_fillet_r=r3(0.5 * (tab_size / 2 + tab_size)),
@@ -221,10 +238,11 @@ def derive(spec: simple_spec, rules: design_rules = RULES, adj: dict | None = No
         output_bearing_offset=r3(2 * mw + d_t),
         top_base_thickness=r3(max(rules.min_plate, te * rb.ID) + adj["top_base_thickness"]),
         top_cap=top_cap,
-        eccentric_insert_flange_offset=r3(_lip(ib, rules)),
+        eccentric_insert_flange_offset=r3(insert_flange_offset),
         output_flange_offset=r3(_lip(ob, rules)),
         output_plate_edge_offset=r3(plate_r - R_oh - pin_r),
-        output_plate_t=r3(max(rules.min_plate, te * nr.ID)),
+        output_plate_thickness=r3(output_plate_thickness),
+        output_plate_t=r3(output_plate_thickness),
         output_bore_r=r3(max(0.0, bore)),
         output_cap=out_cap,
     )
@@ -357,10 +375,10 @@ def _solve(spec, rules, max_iter, check_collisions, progress, adj) -> SolveResul
         if not hits:
             return SolveResult(kwargs, gb, log, it, [], dt)
         fixes = {}
-        for a, b, v in hits:
+        for a, b, v, _ in hits:
             f = _collision_fix(a, b)
             if f is None:
-                pairs = ", ".join(f"{a} x {b} ({v:.2f} mm^3)" for a, b, v in hits[:6])
+                pairs = ", ".join(f"{a} x {b} ({v:.2f} mm deep at {th:g} deg)" for a, b, v, th in hits[:6])
                 raise SolveError(f"parts collide and no rule fixes it: {pairs}", log)
             fixes[f[0]] = f[1]
         for key, msg in fixes.items():
@@ -371,7 +389,8 @@ def _solve(spec, rules, max_iter, check_collisions, progress, adj) -> SolveResul
 
 def spec_from_kwargs(kw: dict) -> simple_spec:
     """The simple-mode inputs contained in a full set of gearbox() kwargs."""
-    return simple_spec(**{f: kw[f] for f in simple_spec.__dataclass_fields__})
+    fields = simple_spec.__dataclass_fields__
+    return simple_spec(**{f: kw[f] for f in fields if f in kw})
 
 
 if __name__ == "__main__":
