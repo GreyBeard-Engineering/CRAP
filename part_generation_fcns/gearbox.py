@@ -295,24 +295,31 @@ class gearbox:
             out[name] = self._MOTION_GROUPS[max(keys, key=len)]
         return out
 
-    def collisions(self, min_volume: float = 1e-3) -> list[tuple[str, str, float]]:
+    def collisions(self, min_volume: float = 1e-3, parallel: bool = True) -> list[tuple[str, str, float]]:
         """Exact solid-solid overlaps in the nominal assembly: [(label_a, label_b, volume)].
-        Touching faces (zero-volume contact) don't count."""
+        Touching faces (zero-volume contact) don't count. Pairs whose bounding boxes overlap
+        are intersected exactly, spread over a pool of worker processes when parallel."""
         placed = list(self.assembly().children)
         boxes = [p.bounding_box() for p in placed]
-        hits = []
+        pairs = []
         for i in range(len(placed)):
             a = boxes[i]
             for j in range(i + 1, len(placed)):
                 b = boxes[j]
-                if (a.min.X >= b.max.X or b.min.X >= a.max.X or a.min.Y >= b.max.Y or
+                if not (a.min.X >= b.max.X or b.min.X >= a.max.X or a.min.Y >= b.max.Y or
                         b.min.Y >= a.max.Y or a.min.Z >= b.max.Z or b.min.Z >= a.max.Z):
-                    continue
-                common = placed[i] & placed[j]
-                v = 0.0 if common is None else common.volume
-                if v > min_volume:
-                    hits.append((placed[i].label, placed[j].label, v))
-        return hits
+                    pairs.append((i, j))
+
+        results = None
+        if parallel and len(pairs) > 40:
+            try:
+                results = _parallel_overlaps(placed, pairs)
+            except Exception:           # broken pool / no worker support: fall back to serial
+                global _POOL
+                _POOL = None
+        if results is None:
+            results = [(i, j, _overlap(placed[i], placed[j])) for i, j in pairs]
+        return [(placed[i].label, placed[j].label, v) for i, j, v in results if v > min_volume]
 
     def assembly(self, layout: dict | None = None) -> Compound:
         children = []
@@ -366,6 +373,56 @@ class gearbox:
         self.export(out_dir)
         return self.parts
 
+
+
+# ---------- exact overlap checks, optionally across worker processes ----------
+# OCCT booleans don't run concurrently under the GIL, so collisions() fans the pairs out to a
+# persistent process pool. Shapes reach the workers as BREP files (they don't pickle).
+_POOL = None
+
+
+def _overlap(a, b) -> float:
+    common = a & b
+    return 0.0 if common is None else common.volume
+
+
+def _overlap_chunk(args) -> list[tuple[int, int, float]]:
+    from build123d import import_brep
+    paths, pairs = args
+    cache = {}
+
+    def load(k):
+        if k not in cache:
+            cache[k] = import_brep(paths[k])
+        return cache[k]
+
+    return [(i, j, _overlap(load(i), load(j))) for i, j in pairs]
+
+
+def _pool():
+    global _POOL
+    if _POOL is None:
+        from concurrent.futures import ProcessPoolExecutor
+        _POOL = ProcessPoolExecutor(max_workers=max(2, min(12, (os.cpu_count() or 4) - 2)))
+    return _POOL
+
+
+def _parallel_overlaps(placed, pairs) -> list[tuple[int, int, float]]:
+    import tempfile
+    from build123d import export_brep
+    pool = _pool()
+    with tempfile.TemporaryDirectory() as d:
+        used = sorted({k for pair in pairs for k in pair})
+        paths = {k: os.path.join(d, f"{k}.brep") for k in used}
+        for k in used:
+            export_brep(placed[k], paths[k])
+        # expensive pairs (the cycloid's) first, then round-robin so every worker gets a mix
+        n = pool._max_workers * 3
+        chunks = [pairs[c::n] for c in range(n)]
+        out = []
+        for part in pool.map(_overlap_chunk, [({k: paths[k] for p in ch for k in p}, ch) for ch in chunks if ch]):
+            out.extend(part)
+    return out
 
 # example gearbox: NEMA17 drive, 23:1
 EXAMPLE_KWARGS = dict(

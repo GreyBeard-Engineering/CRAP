@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from part_generation_fcns.classdefs import *
 from part_generation_fcns.errors import GeometryError
 from part_generation_fcns.gearbox import gearbox
-from part_generation_fcns.hardware import _SHCS
+from part_generation_fcns.hardware import _SHCS, socket_head_bolt
 
 SCREW_SIZES = sorted(_SHCS)            # metric SHCS sizes we know head dimensions for
 
@@ -31,10 +31,12 @@ class simple_spec:
 
 @dataclass
 class design_rules:
-    min_wall: float = 1.5          # thinnest wall anywhere
+    min_wall: float = 1.5          # thinnest wall anywhere...
+    insert_wall: float = 1.0       # ...except the eccentric insert's, at one point beside the shaft
     clearance: float = 1.0         # running clearance between moving parts and plates
     lip_frac: float = 0.3          # lip / cap overlap onto a race, as a fraction of race width
-    screw_frac: float = 0.10       # largest cap screw diameter as a fraction of bearing OD
+    screw_frac: float = 0.10       # largest cap screw diameter as a fraction of bearing OD...
+    screw_th_frac: float = 0.5     # ...and of bearing width (keeps screws sane on big thin bearings)
     thread_engage: float = 1.5     # threaded depth >= this * screw diameter
     min_plate: float = 3.0         # thinnest plate
 
@@ -61,9 +63,9 @@ class SolveResult:
 
 
 def _screw(b: bearing, rules: design_rules, step: int = 0) -> float:
-    """Cap screw diameter for bearing b: the largest size <= screw_frac * OD (at least the
-    smallest size), then `step` sizes smaller."""
-    limit = max(SCREW_SIZES[0], rules.screw_frac * b.OD)
+    """Cap screw diameter for bearing b: the largest size <= screw_frac * OD and
+    <= screw_th_frac * width (at least the smallest size), then `step` sizes smaller."""
+    limit = max(SCREW_SIZES[0], min(rules.screw_frac * b.OD, rules.screw_th_frac * b.th))
     idx = max(i for i, d in enumerate(SCREW_SIZES) if d <= limit) - step
     if idx < 0:
         raise SolveError(f"no screw small enough for the {b.ID:g}x{b.OD:g} bearing's cap")
@@ -71,8 +73,9 @@ def _screw(b: bearing, rules: design_rules, step: int = 0) -> float:
 
 
 def _head(d: float) -> tuple[float, float]:
-    head_d, head_h, _ = _SHCS[d]
-    return head_d, head_h
+    """(head diameter, head height) exactly as the hardware generator builds the screw."""
+    b = socket_head_bolt(d, 1.0)
+    return b.head_d, b.head_h
 
 
 def _lip(b: bearing, rules: design_rules) -> float:
@@ -96,6 +99,13 @@ def derive(spec: simple_spec, rules: design_rules = RULES, adj: dict | None = No
     rb, ib, nr, ob, m = (spec.roller_bearing, spec.input_bearing, spec.output_needle_roller,
                          spec.output_bearing, spec.drive_motor)
     e = spec.e
+
+    # the eccentric insert carries the motor shaft offset by e inside the input bearing's ID
+    need_id = 2 * (m.shaft_r + e + rules.insert_wall)
+    if ib.ID < need_id:
+        raise SolveError(f"the input bearing's ID ({ib.ID:g} mm) is too small for the motor shaft "
+                         f"(Ø{2 * m.shaft_r:g}) offset by e={e:g} with a {rules.insert_wall:g} mm insert wall: "
+                         f"needs ID >= {need_id:.1f} mm")
 
     # cycloid cap: screws just outside the input bearing seat
     d_c = _screw(ib, rules, int(adj["cycloid_cap_screw"]))
@@ -131,19 +141,27 @@ def derive(spec: simple_spec, rules: design_rules = RULES, adj: dict | None = No
     root = spec.roller_R - rb.OD / 2 - e      # smallest cycloid radius
     plate_r = spec.roller_R - rb.OD / 2 - cl  # output plate edge, clear of the rollers
     shoulder = ob.ID / 2 + _lip(ob, rules)
-    lo = max(cyc_cap_outer + mw + r_oh, shoulder + mw + pin_r)
+    # the cap sits on the cycloid face, so its edge may come right up to the holes (its own
+    # edge_offset already walls in its screws); the output shoulder needs a wall to the pin holes
+    lo = max(cyc_cap_outer + r_oh, shoulder + mw + pin_r)
     hi = min(root - mw - r_oh, plate_r - mw - pin_r)
     if lo > hi:
-        raise GeometryError("derive.output_holes_dont_fit",
-                            f"output holes need {lo - hi:.2f} mm more room between the cycloid cap / "
-                            f"output shoulder and the cycloid root")
+        cap_limits = cyc_cap_outer + r_oh >= shoulder + mw + pin_r
+        if cap_limits and d_c > SCREW_SIZES[0]:     # a smaller cycloid cap screw shrinks the cap
+            raise GeometryError("derive.output_holes_dont_fit",
+                                f"output holes need {lo - hi:.2f} mm more room inside the cycloid")
+        # the room grows 1:1 with roller R (the root and the plate edge both move out)
+        raise SolveError(f"the output holes (Ø{2 * r_oh:g} for a Ø{nr.OD:g} needle roller orbiting by e) "
+                         f"need {lo - hi:.1f} mm more radial room: increase roller R to at least "
+                         f"{spec.roller_R + lo - hi:.1f} mm, or use a smaller e, needle roller or "
+                         f"{'input' if cap_limits else 'output'} bearing")
     R_oh = (lo + hi) / 2
     N_oh = _pattern_n(R_oh, 4 * r_oh, 3, 8)   # web between holes >= one hole diameter
 
     # stack gaps, driven by the screw heads that sit in them
     needle_d = nr.ID
     cyc_t = _flange(ib, rules).thickness + ib.th
-    needle_head_drop = _head(needle_d)[1] - (cyc_t - nr.th) / 2 if needle_d in _SHCS else 0.0
+    needle_head_drop = _head(needle_d)[1] - (cyc_t - nr.th) / 2
     base_cycloid = cl + max(0.0, needle_head_drop) + adj["base_cycloid_spacing"]
     cap_output = cl + _head(d_c)[1] + adj["cap_output_spacing"]
     output_top = cl + adj["output_top_spacing"]

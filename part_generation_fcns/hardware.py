@@ -30,7 +30,9 @@ def socket_head_bolt(d: float, length: float) -> bolt:
 
 
 def bolt_name(b: bolt) -> str:
-    return f"M{b.d:g}x{b.length:g}"
+    """'M3x13.5' for metric sizes; 'D3.175x14.5' for anything else. Length to 0.1 mm."""
+    size = f"M{b.d:g}" if round(b.d, 2) in _SHCS else f"D{b.d:g}"
+    return f"{size}x{round(b.length, 1):g}"
 
 
 def make_bolt(b: bolt) -> Part:

@@ -20,7 +20,7 @@ The GUI opens at <http://127.0.0.1:8000>.
 ## The GUI
 
 **Left panel: Manual Configuration**
-- **Simple mode:** you enter the bearings, the motor (with a *face mount* option), the ratio, the eccentricity and the roller radius. A solver derives every other dimension, rebuilds until the geometry checks pass, and finishes with an exact 3D collision check (about 15 s). If the inputs can't work, it tells you why in plain language, for example "the roller bearing is too large for this e, ratio and roller R".
+- **Simple mode:** you enter the bearings, the motor (with a *face mount* option), the ratio, the eccentricity and the roller radius. A solver derives every other dimension, rebuilds until the geometry checks pass, and finishes with an exact 3D collision check, spread across CPU cores (a few seconds; longer for many rollers). If the inputs can't work, it tells you why in plain language, for example "the roller bearing is too large for this e, ratio and roller R".
 - **Advanced mode:** every dimension is editable. Switching from Simple to Advanced pre-fills the solver's choices.
 - **Key Parameters and Plate Spacing:** always visible at the top.
 - **Tabs:** Bearings, Motor, and (Advanced only) Parts, with a sub-tab per custom part.
@@ -89,14 +89,14 @@ res.gearbox.export("out", tolerancing(enabled=True, **DEFAULT_MAGNITUDES), fmt="
 - **Screws follow the bearings:**
   - Ring-roller bolts thread into the base, and their size comes from the roller bearing's ID.
   - Needle screws go in from below and thread into the output plate; their size comes from the needle roller's ID.
-  - Cap screw sizes come from the bearing each cap retains.
+  - Cap screw sizes come from the bearing each cap retains: the largest metric size up to 10% of its OD and half its width.
 - **Cycloid validity:** the cycloid is rejected if it would cusp (roller R ≤ e·(ratio+1)) or **undercut** (the roller is larger than the profile's tightest curve).
 
 ### Known limitations
 
 - Screw lengths come straight from the stack and aren't rounded to stock lengths.
 - An M3 needle-screw head is almost as wide as a 6 mm needle roller, so it rubs the roller's outer race. A washer would fix this.
-- Simple-mode builds take about 15 s because of the exact collision check.
+- Simple-mode builds wait on the exact collision check: a few seconds for typical designs, 20–30 s with about 50 roller stacks.
 
 ## Credits
 
