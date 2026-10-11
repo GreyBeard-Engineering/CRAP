@@ -40,14 +40,15 @@ def check_cap(cp: cap, b: bearing, race: str = "outer", name: str = "cap"):
 
 
 def make_cap(cp: cap, b: bearing, race: str = "outer", hole_delta: float = 0.0,
-             cutouts: patterned_hole | None = None) -> Part:
+             cutouts: patterned_hole | None = None, edge_fillet: float = 0.0) -> Part:
     """Ring clamping a bearing race against its support flange. hole_delta grows (or, if
     negative, shrinks) the screw holes; cutouts are extra holes through the cap (e.g. the
-    cycloid's output holes when the cap reaches over them)."""
+    cycloid's output holes, notching its edge), and edge_fillet rounds the corners where
+    they meet the outer edge."""
     ri, ro = cap_radii(cp, b, race)
 
     with BuildPart() as part:
-        with BuildSketch():
+        with BuildSketch() as sk:
             Circle(ro)
             if ri > 0:
                 Circle(ri, mode=Mode.SUBTRACT)
@@ -56,5 +57,9 @@ def make_cap(cp: cap, b: bearing, race: str = "outer", hole_delta: float = 0.0,
             if cutouts is not None:
                 with PolarLocations(cutouts.R, cutouts.N, start_angle=cutouts.start_angle):
                     Circle(cutouts.r, mode=Mode.SUBTRACT)
+                if edge_fillet > 0:     # the notch corners sit on the outer circle
+                    corners = [v for v in sk.vertices() if abs((v.X ** 2 + v.Y ** 2) ** 0.5 - ro) < 1e-3]
+                    if corners:
+                        fillet(corners, edge_fillet)
         extrude(amount=cp.flange.thickness)
     return part.part

@@ -1,3 +1,5 @@
+import dataclasses
+
 import numpy as np
 from build123d import *
 from part_generation_fcns.classdefs import *
@@ -32,10 +34,23 @@ def output_holes(c: cycloid) -> patterned_hole:
     return patterned_hole(r=c.output_needle_roller.OD / 2 + c.e, R=c.output_holes_R, N=c.output_holes_N)
 
 
-def cap_reaches_output_holes(c: cycloid) -> bool:
-    """True when the cycloid cap extends over the output holes, so it needs the holes too."""
+def cycloid_cap(c: cycloid) -> cap:
+    """The cycloid cap as built. Its outline is fixed by the output holes: outer radius = the
+    hole circle + 1/4 of the hole radius, so every hole notches the edge (corners filleted by
+    the same 1/4 hole radius). The cap's edge_offset is replaced to match."""
+    oh, rh = output_holes(c), c.cap.bearing_retainer_holes
+    return dataclasses.replace(c.cap, edge_offset=oh.R + oh.r / 4 - rh.R - rh.r)
+
+
+def cycloid_cap_fillet(c: cycloid) -> float:
+    return output_holes(c).r / 4
+
+
+def make_cycloid_cap(c: cycloid, tol: tolerancing = NOMINAL) -> Part:
     oh = output_holes(c)
-    return cap_radii(c.cap, c.input_bearing)[1] > oh.R - oh.r
+    cut = patterned_hole(r=oh.r + tol.clearance, R=oh.R, N=oh.N, start_angle=oh.start_angle)
+    return make_cap(cycloid_cap(c), c.input_bearing, hole_delta=tol.delta("cycloid_cap.holes"),
+                    cutouts=cut, edge_fillet=cycloid_cap_fillet(c))
 
 
 def cap_screw_hole_gap(c: cycloid) -> float:
@@ -59,17 +74,15 @@ def make_cycloid(c: cycloid, tol: tolerancing = NOMINAL) -> Part:
     if profile_undercuts(c):
         geometry_issue("cycloid.undercut", "the roller is too large for this e / ratio / roller R: "
                             "the cycloid profile undercuts (reduce e or the roller OD, or increase roller R)")
-    check_cap(c.cap, c.input_bearing, name="cycloid_cap")
+    check_cap(cycloid_cap(c), c.input_bearing, name="cycloid_cap")
     oh = output_holes(c)
-    if cap_reaches_output_holes(c):
-        # the cap gets the output holes too; its screws must sit clear of them, and it must
-        # stay inside the disc
-        if cap_screw_hole_gap(c) <= 0:
-            geometry_issue("cycloid.cap_screws_hit_output_holes",
-                                "cycloid cap screw holes run into the output holes")
-        root = c.roller_R - c.roller_bearing.OD / 2 - c.e
-        if cap_radii(c.cap, c.input_bearing)[1] >= root:
-            geometry_issue("cycloid.cap_past_disc_edge", "cycloid cap reaches past the cycloid's edge")
+    # the cap carries the output holes; its screws must sit clear of them, and it must stay
+    # inside the disc
+    if cap_screw_hole_gap(c) <= 0:
+        geometry_issue("cycloid.cap_screws_hit_output_holes", "cycloid cap screw holes run into the output holes")
+    root = c.roller_R - c.roller_bearing.OD / 2 - c.e
+    if cap_radii(cycloid_cap(c), c.input_bearing)[1] >= root:
+        geometry_issue("cycloid.cap_past_disc_edge", "cycloid cap reaches past the cycloid's edge")
 
     tf = c.cap.flange.thickness
     rb = c.input_bearing.OD / 2 + tol.delta("cycloid.bearing_seat")
@@ -97,7 +110,7 @@ def make_cycloid_step(c: cycloid, path: str = "steps/cycloid.step",
                       cap_path: str = "steps/cycloid_cap.step") -> tuple[Part, Part]:
     """Export cycloid disc and its cap to separate STEP files, each sitting on z=0."""
     disc = make_cycloid(c)
-    cap_part = make_cap(c.cap, c.input_bearing)
+    cap_part = make_cycloid_cap(c)
     disc.label, cap_part.label = "cycloid", "cycloid_cap"
     export_step(disc, ensure_parent(path))
     export_step(cap_part, ensure_parent(cap_path))

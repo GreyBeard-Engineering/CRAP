@@ -6,8 +6,7 @@ from part_generation_fcns.classdefs import *
 from part_generation_fcns.errors import collecting_issues, geometry_issue
 from part_generation_fcns.base_step import make_base
 from part_generation_fcns.top_step import make_top, _radii as top_radii
-from part_generation_fcns.cycloid_step import (cap_reaches_output_holes, cycloid_thickness, make_cycloid,
-                                                output_holes)
+from part_generation_fcns.cycloid_step import cycloid_thickness, make_cycloid, make_cycloid_cap
 from part_generation_fcns.eccentric_insert_step import make_eccentric_insert
 from part_generation_fcns.output_step import make_output, output_height, output_plate_r
 from part_generation_fcns.cap_step import cap_radii, make_cap
@@ -197,13 +196,9 @@ class gearbox:
         L["eccentric_insert"] = (self._try(lambda: make_eccentric_insert(self.eccentric_insert, tol), "eccentric_insert"),
                                  [Location((e, 0, z["eccentric_insert"]), (0, 0, 180))])
         L["cycloid"] = (self._try(lambda: make_cycloid(c, tol), "cycloid"), [Location((e, 0, z["cycloid"]))])
-        # a cycloid cap that reaches over the output holes gets the same holes
-        cap_cut = None
-        if cap_reaches_output_holes(c):
-            oh = output_holes(c)
-            cap_cut = patterned_hole(r=oh.r + tol.clearance, R=oh.R, N=oh.N, start_angle=oh.start_angle)
-        L["cycloid_cap"] = (self._try(lambda: make_cap(c.cap, c.input_bearing, hole_delta=tol.delta("cycloid_cap.holes"),
-                                     cutouts=cap_cut), "cycloid_cap"), [Location((e, 0, z["cycloid_cap"]))])
+        # the cycloid cap's outline is set by the output holes (notched, filleted)
+        L["cycloid_cap"] = (self._try(lambda: make_cycloid_cap(c, tol), "cycloid_cap"),
+                            [Location((e, 0, z["cycloid_cap"]))])
         L["output"] = (self._try(lambda: make_output(o, tol), "output"), [Location((0, 0, z["output"]))])
         L["output_cap"] = (self._try(lambda: make_cap(o.cap, o.output_bearing, race="inner", hole_delta=tol.delta("output_cap.holes")), "output_cap"), [Location((0, 0, z["output_cap"]))])
         L["top"] = (self._try(lambda: make_top(tp, tol), "top"), [Location((0, 0, z["top"]))])

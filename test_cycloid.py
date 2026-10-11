@@ -6,7 +6,7 @@ import sys
 import numpy as np
 from part_generation_fcns.classdefs import *
 from part_generation_fcns.cap_step import cap_radii
-from part_generation_fcns.cycloid_step import cycloid_profile, cycloid_thickness, make_cycloid_step, output_holes
+from part_generation_fcns.cycloid_step import cycloid_cap, cycloid_profile, cycloid_thickness, make_cycloid_step, output_holes
 
 
 def make_test_cycloid() -> cycloid:
@@ -71,7 +71,9 @@ def check_part(c: cycloid, path: str, cap_path: str, r_max: float):
     cbb = cap_part.bounding_box()
     assert cap_part.is_valid, "generated cap is not valid"
     assert abs(cbb.size.Z - c.cap.flange.thickness) < 1e-6, cbb.size
-    assert abs(cbb.size.X - 2 * cap_radii(c.cap, c.input_bearing)[1]) < 1e-3, cbb.size
+    # the outline is set by the output holes (notched edge), so check the widest extent
+    outer = cap_radii(cycloid_cap(c), c.input_bearing)[1]
+    assert abs(max(cbb.size.X, cbb.size.Y) - 2 * outer) < 1e-2, (cbb.size, outer)
     print(f"cap ok: volume={cap_part.volume:.1f} mm^3, bbox={cbb.size}, wrote {cap_path}")
 
 

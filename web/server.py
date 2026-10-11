@@ -68,7 +68,7 @@ LABELS = {"ratio": "gearbox ratio", "e": "eccentricity e",
           "housing_edge_offset": "edge offset (beyond roller holes)",
           "output_plate_edge_offset": "plate edge offset (beyond needle screw holes)",
           "mounting_holes.R": "R (beyond base edge)",
-          "cycloid_cap.edge_offset": "edge offset (beyond screw holes)",
+          "cycloid_cap.edge_offset": "edge offset (unused: set by the output holes)",
           "top_cap.edge_offset": "edge offset (beyond screw holes)",
           "output_cap.edge_offset": "bore offset (inside screw holes)",
           "drive_motor.face_mount": "face mount (screws into the motor face)"}
