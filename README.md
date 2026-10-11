@@ -20,11 +20,12 @@ The GUI opens at <http://127.0.0.1:8000>.
 ## The GUI
 
 **Left panel: Manual Configuration**
-- **Simple mode:** you enter the bearings, the motor (with a *face mount* option), the ratio, the eccentricity and the roller radius. A solver derives every other dimension, rebuilds until the geometry checks pass, and finishes with an exact 3D collision check, spread across CPU cores (a few seconds; longer for many rollers). If the inputs can't work, it tells you why in plain language, for example "the roller bearing is too large for this e, ratio and roller R".
+- **Simple mode:** you enter the bearings, the motor (with a *face mount* option), the ratio, the eccentricity and the roller radius. A solver derives every other dimension, including the plate gaps (hidden in this mode), and adjusts until the design builds. It finishes with an exact 3D collision check, spread across CPU cores (a few seconds; longer for many rollers).
 - **Advanced mode:** every dimension is editable. Switching from Simple to Advanced pre-fills the solver's choices.
-- **Key Parameters and Plate Spacing:** always visible at the top.
+- **Key Parameters** (e, roller R, ratio) are always visible; **Plate Spacing** only in Advanced.
 - **Tabs:** Bearings, Motor, and (Advanced only) Parts, with a sub-tab per custom part.
 - **Rebuild:** turns orange when the form no longer matches the model on screen. Enter also rebuilds.
+- **A design is good to go when nothing collides.** If the solver can't find a clean design, it still builds its best attempt. Colliding parts are tinted, the overlap volumes are drawn in red, and the colliding part pairs are listed. **Revert to last valid design** restores the last clean build. Detailed solver messages go to the server log.
 
 **Left panel: Export**
 - STEP (individual parts plus the assembled gearbox) or STL.
@@ -35,6 +36,8 @@ The GUI opens at <http://127.0.0.1:8000>.
   - cycloid running clearance.
 - Every fit can be overridden under *Advanced fits*. The motor-hole fit follows *face mount*.
 - The download is a zip. It includes `export_settings.json`, which records every dimension and tolerance used.
+- Designs with colliding parts can't be exported.
+- **Configuration:** save every parameter, the mode, the tolerances and the export choices to a JSON file, and load one back later.
 
 **Right panel: View**
 - X / Y / Z / home camera views.
@@ -68,7 +71,7 @@ res.gearbox.export("out", tolerancing(enabled=True, **DEFAULT_MAGNITUDES), fmt="
 | `part_generation_fcns/hardware.py` | bearings, spacers and ISO 4762 socket-head screws |
 | `part_generation_fcns/tolerancing.py` | export-time fits |
 | `part_generation_fcns/solver.py` | Simple-mode derivation rules and the iterate-until-it-builds solver |
-| `part_generation_fcns/errors.py` | coded geometry errors the solver reacts to |
+| `part_generation_fcns/errors.py` | coded geometry errors the solver reacts to (raised when strict; recorded when building a best-effort design) |
 | `web/` | FastAPI server (`server.py`), mesh payload (`mesh.py`) and the three.js front end (`static/`) |
 | `steps/` | generated STEP files (`steps/gearbox/` holds the full assembly) |
 | `test_cycloid.py`, `test_solver.py` | checks; `python test_solver.py --full` runs the exact collision check on every case in the sweep |
@@ -90,13 +93,18 @@ res.gearbox.export("out", tolerancing(enabled=True, **DEFAULT_MAGNITUDES), fmt="
   - Ring-roller bolts thread into the base, and their size comes from the roller bearing's ID.
   - Needle screws go in from below and thread into the output plate; their size comes from the needle roller's ID.
   - Cap screw sizes come from the bearing each cap retains: the largest metric size up to 10% of its OD and half its width.
-- **Cycloid validity:** the cycloid is rejected if it would cusp (roller R ≤ e·(ratio+1)) or **undercut** (the roller is larger than the profile's tightest curve).
+- **Cycloid cap:** a small ring around the input bearing. Its outer radius is its screw circle + ¼ of the screw-hole radius, so the screws notch its edge, with ¼-screw-radius fillets on the notch corners.
+- **Output holes** go as far out as the walls allow, which gives the largest moment arm and so the lowest pin forces. The output plate is sized to clear the ring rollers.
+- **Eccentric insert:** the motor shaft, offset by e, keeps at least 1 mm of insert wall inside the input bearing's bore.
+- **Cycloid validity:** a cycloid that would cusp (roller R ≤ e·(ratio+1)) or **undercut** (the roller is larger than the profile's tightest curve) is flagged.
 
 ### Known limitations
 
 - Screw lengths come straight from the stack and aren't rounded to stock lengths.
 - An M3 needle-screw head is almost as wide as a 6 mm needle roller, so it rubs the roller's outer race. A washer would fix this.
 - Simple-mode builds wait on the exact collision check: a few seconds for typical designs, 20–30 s with about 50 roller stacks.
+- In Simple mode, the cycloid cap's screws sit on a plain ring, so the output holes have to clear their heads radially. That sets the floor on compactness. Placing the screws between the output holes would allow smaller designs.
+- Python changes take effect only after the server restarts (close and reopen `launch_gui.bat`).
 
 ## Credits
 
@@ -114,8 +122,11 @@ CRAP was built in a long back-and-forth between **Dash** and **Claude** (Anthrop
   - radii as offsets from hole patterns;
   - separate plate gaps driven by screw heads;
   - bearing-driven screw sizes;
-  - a Simple mode that derives everything and iterates until it builds.
-- Checked the generated assemblies in SolidWorks and steered every iteration of the GUI's layout and workflow: tabs, modes, the view panel, part toggles, the Rebuild button and section views.
+  - a Simple mode that derives everything and iterates until it builds;
+  - building failed designs anyway so their collisions are visible, with a revert button;
+  - judging designs by collisions alone;
+  - the notched cycloid cap and moving the output holes outward.
+- Checked the generated assemblies in SolidWorks and steered every iteration of the GUI's layout and workflow: tabs, modes, the view panel, part toggles, the Rebuild button, section views and configuration save/load.
 
 **Claude: implementation**
 - Wrote most of the code from those designs:
@@ -123,10 +134,11 @@ CRAP was built in a long back-and-forth between **Dash** and **Claude** (Anthrop
   - the `gearbox` assembly class with its stack, placement and checks;
   - the hardware helpers;
   - the tolerancing system;
-  - the Simple-mode solver and its derivation rules.
+  - the Simple-mode solver, its derivation rules and its best-effort fallback.
 - Built the web app: the FastAPI server, the three.js viewer, the motion model (it checked the cycloid's counter-rotation direction against the CAD before animating it), and the export pipeline.
 - Did the verification work:
   - the collision checks, which found and fixed the cap-screw/output-plate overlap;
   - the cycloid **undercut** check, after the solver sweep turned up broken profiles;
-  - the solver sweep tests and browser testing.
+  - the parallel collision check (about 3× faster);
+  - the edge-case and compact-design build campaigns, the solver sweep tests and browser testing.
 - Wrote this README.
