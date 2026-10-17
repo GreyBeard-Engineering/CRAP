@@ -1,0 +1,69 @@
+name: Build Windows EXE
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/windows-exe.yml'
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          architecture: x64
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt pyinstaller
+      - name: Package application
+        run: >-
+          python -m PyInstaller --noconfirm --clean --onedir --console
+          --name CRAP --add-data "web/static;web/static"
+          --collect-all build123d --collect-all OCP
+          --collect-all cadquery_ocp --collect-all vtkmodules
+          --collect-all scipy --collect-all numpy
+          --collect-all uvicorn --collect-all fastapi
+          --collect-all starlette --collect-all pydantic
+          --collect-submodules web --collect-submodules part_generation_fcns
+          launch_gui.py
+      - name: Verify packaged server startup
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath "$PWD/dist/CRAP/CRAP.exe" -ArgumentList '--no-browser','--port','18765' -PassThru -RedirectStandardOutput startup.log -RedirectStandardError startup-errors.log
+          try {
+            $ready = $false
+            for ($i = 0; $i -lt 120; $i++) {
+              if ($p.HasExited) { throw 'Packaged application exited before becoming ready.' }
+              try {
+                $r = Invoke-WebRequest http://127.0.0.1:18765/api/defaults -TimeoutSec 2
+                if ($r.StatusCode -eq 200) {
+                  $page = Invoke-WebRequest http://127.0.0.1:18765/ -TimeoutSec 5
+                  if ($page.StatusCode -eq 200) { $ready = $true; break }
+                }
+              } catch { Start-Sleep -Seconds 1 }
+            }
+            if (-not $ready) { throw 'Packaged server startup timed out.' }
+          } finally {
+            if (-not $p.HasExited) { Stop-Process -Id $p.Id -Force }
+            Get-Content startup.log,startup-errors.log -ErrorAction SilentlyContinue
+          }
+      - name: Record installed dependency versions
+        run: python -m pip freeze > dist/CRAP/build-dependencies.txt
+      - name: Upload portable application bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: CRAP-Windows-x64
+          path: dist/CRAP/
+          retention-days: 30
+      - name: Upload diagnostic logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Windows-build-logs
+          path: |
+            startup*.log
+            build/CRAP/warn-CRAP.txt
+          if-no-files-found: ignore
